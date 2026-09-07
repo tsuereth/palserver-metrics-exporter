@@ -1,2 +1,3 @@
-# palserver-metrics-exporter
-UNOFFICIAL Prometheus exporter for PalWorld game server metrics
+A fan-made hobby project, not officially associated with PalWorld or Pocketpair.
+
+**This project is currently under heavy development.**
