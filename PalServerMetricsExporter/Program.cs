@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Mono.Options;
@@ -16,7 +17,11 @@ namespace PalServerMetricsExporter
 			using var loggerFactory = LoggerFactory.Create(c => c.AddSystemdConsole());
 			var logger = loggerFactory.CreateLogger<Program>();
 
+			var appAssembly = Assembly.GetExecutingAssembly();
+			var appVersion = appAssembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion;
+
 			var printHelp = false;
+			var printVersion = false;
 
 			var palServerHost = "localhost";
 			var palServerPortString = "8212";
@@ -34,6 +39,7 @@ namespace PalServerMetricsExporter
 			var options = new OptionSet()
 			{
 				{ "help", "Print help text", _ => printHelp = true },
+				{ "version", "Print application version", _ => printVersion = true },
 
 				{ "palserver-host=", $"Target PalServer host, default: {palServerHost}", o => palServerHost = o },
 				{ "palserver-port=", $"Target PalServer port, default: {palServerPortString}", o => palServerPortString = o },
@@ -55,6 +61,11 @@ namespace PalServerMetricsExporter
 			if (printHelp)
 			{
 				options.WriteOptionDescriptions(Console.Out);
+				return 0;
+			}
+			if (printVersion)
+			{
+				logger.LogInformation($"{appAssembly.GetName().Name} version {appVersion}");
 				return 0;
 			}
 
