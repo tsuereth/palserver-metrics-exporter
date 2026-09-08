@@ -234,7 +234,7 @@ namespace PalServerMetricsExporter
                         this.CreatePlayerMetrics(player.PlayerId);
                     }
 
-                    var playerLabelValues = playerLabels.Values.ToArray();
+                    var playerLabelValues = this.playerLabelsById[player.PlayerId].Values.ToArray();
 
                     this.playerPingById[player.PlayerId].WithLabels(playerLabelValues).Set(player.Ping / 1000.0);
                     this.playerLocationXById[player.PlayerId].WithLabels(playerLabelValues).Set(player.LocationX);
