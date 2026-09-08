@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -26,6 +27,8 @@ namespace PalServerMetricsExporter
             var palServerHost = "localhost";
             var palServerPortString = "8212";
             var palServerAdminPassword = string.Empty;
+            var palServerAdminPasswordFile = string.Empty;
+
             var includePlayerDataString = true.ToString();
             var ignoreZeroPingPlayersString = true.ToString();
             var includeServerSettingsString = true.ToString();
@@ -44,9 +47,9 @@ namespace PalServerMetricsExporter
                 { "palserver-host=", $"Target PalServer host, default: {palServerHost}", o => palServerHost = o },
                 { "palserver-port=", $"Target PalServer port, default: {palServerPortString}", o => palServerPortString = o },
                 { "palserver-admin-password=", $"Target PalServer AdminPassword, default: {palServerAdminPassword}", o => palServerAdminPassword = o },
-				// TODO: allow loading the admin password from a (secret) file, by path
-				// (throw an exception if both the literal option and the file path option are provided)
-				{ "include-player-data=", $"Include player data in exported metrics, default: {includePlayerDataString}", o => includePlayerDataString = o },
+                { "palserver-admin-password-file=", $"Path to a file containing the target PalServer AdminPassword, default: {palServerAdminPasswordFile}", o => palServerAdminPasswordFile = o },
+
+                { "include-player-data=", $"Include player data in exported metrics, default: {includePlayerDataString}", o => includePlayerDataString = o },
                 { "ignore-zero-ping-players=", $"When reporting player data, ignore data with a ping of zero, default: {ignoreZeroPingPlayersString}", o => ignoreZeroPingPlayersString = o },
                 { "include-server-settings=", $"Include server settings in exported metrics, default: {includeServerSettingsString}", o => includeServerSettingsString = o },
 
@@ -74,6 +77,16 @@ namespace PalServerMetricsExporter
             {
                 throw new ArgumentException($"Failed to parse ushort from palserver-port argument '{palServerPortString}'");
             }
+            if (!string.IsNullOrEmpty(palServerAdminPassword) && !string.IsNullOrEmpty(palServerAdminPasswordFile))
+            {
+                throw new ArgumentException($"Cannot specify both palserver-admin-password and palserver-admin-password-file");
+            }
+            if (!string.IsNullOrEmpty(palServerAdminPasswordFile))
+            {
+                logger.LogInformation($"Reading PalServer AdminPassword from file: {palServerAdminPasswordFile}");
+                palServerAdminPassword = File.ReadAllText(palServerAdminPasswordFile).Trim();
+            }
+
             bool includePlayerData;
             if (!bool.TryParse(includePlayerDataString, out includePlayerData))
             {
