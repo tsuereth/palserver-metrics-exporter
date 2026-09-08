@@ -8,7 +8,7 @@ namespace PalServerMetricsExporter
     public class PalServerMetricsValues
     {
         private const string MetricNamePrefix = "palserver_";
-        
+
         private readonly IManagedLifetimeMetricFactory metricFactory;
 
         private bool includePlayerData;
