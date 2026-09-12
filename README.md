@@ -30,7 +30,7 @@ If this application is able to retrieve server metrics successfully, it will the
 ```
 # HELP palserver_info Server info
 # TYPE palserver_info gauge
-palserver_current_player_num{server_version="v1.0.4.102642",world_guid="1FBDF24927C44861849C2C57868607AC"} 1
+palserver_info{server_version="v1.0.4.102642",world_guid="1FBDF24927C44861849C2C57868607AC"} 1
 # HELP palserver_current_player_num The current number of players connected
 # TYPE palserver_current_player_num gauge
 palserver_current_player_num 0
