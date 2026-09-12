@@ -59,7 +59,12 @@ namespace PalServerMetricsExporter
                 { "export-bind-port=", $"TCP port on which to serve metrics, default: {exportBindPortString}", o => exportBindPortString = o },
                 { "export-path=", $"HTTP path at which to serve metrics, default: {exportPath}", o => exportPath = o },
             };
-            options.Parse(args);
+            var unexpectedArgs = options.Parse(args);
+            if (unexpectedArgs.Count > 0)
+            {
+                var unexpectedArgsString = string.Join(' ', unexpectedArgs);
+                throw new ArgumentException($"Unexpected arguments: {unexpectedArgsString}");
+            }
 
             if (printHelp)
             {
