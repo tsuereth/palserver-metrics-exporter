@@ -186,7 +186,7 @@
         {
           "editorMode": "code",
           "exemplar": false,
-          "expr": "last_over_time(palserver_uptime_seconds[$__range])",
+          "expr": "last_over_time(palserver_info[$__range])",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -203,23 +203,15 @@
         {
           "id": "organize",
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "Value": true,
-              "__name__": false,
-              "instance": true,
-              "job": true,
-              "service": true
+            "excludeByName": {},
+            "includeByName": {
+              "__name__": true,
+              "server_version": true,
+              "world_guid": true
             },
-            "includeByName": {},
             "indexByName": {
-              "Time": 3,
-              "Value": 7,
               "__name__": 0,
-              "instance": 4,
-              "job": 5,
               "server_version": 1,
-              "service": 6,
               "world_guid": 2
             },
             "renameByName": {
@@ -609,7 +601,7 @@
         {
           "editorMode": "code",
           "exemplar": false,
-          "expr": "last_over_time(palserver_player_ping_seconds[$__range])",
+          "expr": "palserver_player_info * on (player_id) group_left(__value__) palserver_player_ping_seconds",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -626,35 +618,20 @@
         {
           "id": "organize",
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "instance": true,
-              "job": true,
-              "player_account_name": true,
-              "player_player_id": true,
-              "server_version": true,
-              "service": true,
-              "world_guid": true
+            "excludeByName": {},
+            "includeByName": {
+              "Value": true,
+              "player_ip": true,
+              "player_name": true,
+              "player_user_id": true
             },
-            "includeByName": {},
             "indexByName": {
-              "Time": 4,
               "Value": 3,
-              "__name__": 5,
-              "instance": 6,
-              "job": 7,
-              "player_account_name": 10,
               "player_ip": 2,
               "player_name": 0,
-              "player_player_id": 11,
-              "player_user_id": 1,
-              "server_version": 8,
-              "service": 9,
-              "world_guid": 12
+              "player_user_id": 1
             },
             "renameByName": {
-              "Time": "",
               "Value": "Ping (seconds)",
               "player_ip": "IP",
               "player_name": "Name",
@@ -755,7 +732,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "palserver_player_ping_seconds",
+          "expr": "palserver_player_ping_seconds * on (player_id) group_left(player_name, player_ip) palserver_player_info",
           "legendFormat": "{{player_name}} ({{player_ip}})",
           "range": true,
           "refId": "A"
@@ -773,13 +750,13 @@
     "list": []
   },
   "time": {
-    "from": "now-15m",
+    "from": "now-1h",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
   "title": "PalServer",
   "uid": "adbqpfk",
-  "version": 9,
+  "version": 11,
   "weekStart": ""
 }
