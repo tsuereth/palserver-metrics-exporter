@@ -15,9 +15,9 @@ namespace PalServerMetricsExporter
         private bool ignoreZeroPingPlayers;
         private bool includeServerSettings;
 
-        private OrderedDictionary<string, string> labels = new();
-
         // Server operational and performance metrics
+        private ICollector<IGauge> infoMetric;
+        private OrderedDictionary<string, string> infoLabels = new();
         private ICollector<IGauge> currentPlayerNum;
         private ICollector<IGauge> serverFps;
         private ICollector<IGauge> serverFrameTime;
@@ -27,7 +27,8 @@ namespace PalServerMetricsExporter
         private ICollector<IGauge> uptime;
 
         // Per-player metrics
-        private Dictionary<string, OrderedDictionary<string, string>> playerLabelsById = new();
+        private Dictionary<string, ICollector<IGauge>> playerInfoById = new();
+        private Dictionary<string, OrderedDictionary<string, string>> playerInfoLabelsById = new();
         private Dictionary<string, ICollector<IGauge>> playerPingById = new();
         private Dictionary<string, ICollector<IGauge>> playerLocationXById = new();
         private Dictionary<string, ICollector<IGauge>> playerLocationYById = new();
@@ -50,158 +51,247 @@ namespace PalServerMetricsExporter
             this.ignoreZeroPingPlayers = ignoreZeroPingPlayers;
             this.includeServerSettings = includeServerSettings;
         }
-
-        private static OrderedDictionary<string, string> FormatServerLabels(PalServerInfo info)
+        private void PrepareServerMetrics(PalServerInfo info)
         {
-            var labels = new OrderedDictionary<string, string>();
+            var newInfoLabels = new OrderedDictionary<string, string>();
+            newInfoLabels["server_version"] = info.Version;
+            newInfoLabels["world_guid"] = info.WorldGuid;
 
-            labels["server_version"] = info.Version;
-            labels["world_guid"] = info.WorldGuid;
+            // If info labels have changed, then re-create the info metric.
+            var forceCreateInfoMetric = false;
+            if (newInfoLabels.Count != this.infoLabels.Count || newInfoLabels.Except(this.infoLabels).Any())
+            {
+                this.infoLabels = newInfoLabels;
+                forceCreateInfoMetric = true;
+            }
 
-            return labels;
-        }
+            if (forceCreateInfoMetric || this.infoMetric == null)
+            {
+                this.infoMetric = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}info",
+                        "Server info",
+                        this.infoLabels.Keys.ToArray())
+                    .WithExtendLifetimeOnUse();
+            }
 
-        private void CreateServerMetrics()
-        {
-            var labelNames = this.labels.Keys.ToArray();
+            if (this.currentPlayerNum == null)
+            {
+                this.currentPlayerNum = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}current_player_num",
+                        "The current number of players connected")
+                    .WithExtendLifetimeOnUse();
+            }
 
-            this.currentPlayerNum = this.metricFactory.CreateGauge(
-                $"{MetricNamePrefix}current_player_num",
-                "The current number of players connected",
-                labelNames).WithExtendLifetimeOnUse();
+            if (this.serverFps == null)
+            {
+                this.serverFps = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}server_fps",
+                        "The server's current runtime frames per second")
+                    .WithExtendLifetimeOnUse();
+            }
 
-            this.serverFps = this.metricFactory.CreateGauge(
-                $"{MetricNamePrefix}server_fps",
-                "The server's current runtime frames per second",
-                labelNames).WithExtendLifetimeOnUse();
+            if (this.serverFrameTime == null)
+            {
+                this.serverFrameTime = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}server_frame_time_seconds",
+                        "The server's processing time between frames")
+                    .WithExtendLifetimeOnUse();
+            }
 
-            this.serverFrameTime = this.metricFactory.CreateGauge(
-                $"{MetricNamePrefix}server_frame_time_seconds",
-                "The server's processing time between frames",
-                labelNames).WithExtendLifetimeOnUse();
+            if (this.days == null)
+            {
+                this.days = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}days",
+                        "The number of in-game days which have passed in the server's game world")
+                    .WithExtendLifetimeOnUse();
+            }
 
-            this.days = this.metricFactory.CreateGauge(
-                $"{MetricNamePrefix}days",
-                "The number of in-game days which have passed in the server's game world",
-                labelNames).WithExtendLifetimeOnUse();
+            if (this.maxPlayerNum == null)
+            {
+                this.maxPlayerNum = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}max_player_num",
+                        "The maximum amount of players allowed on the server")
+                    .WithExtendLifetimeOnUse();
+            }
 
-            this.maxPlayerNum = this.metricFactory.CreateGauge(
-                $"{MetricNamePrefix}max_player_num",
-                "The maximum amount of players allowed on the server",
-                labelNames).WithExtendLifetimeOnUse();
+            if (this.baseCampNum == null)
+            {
+                this.baseCampNum = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}base_camp_num",
+                        "The current number of base camps")
+                    .WithExtendLifetimeOnUse();
+            }
 
-            this.baseCampNum = this.metricFactory.CreateGauge(
-                $"{MetricNamePrefix}base_camp_num",
-                "The current number of base camps",
-                labelNames).WithExtendLifetimeOnUse();
-
-            this.uptime = this.metricFactory.CreateGauge(
-                $"{MetricNamePrefix}uptime_seconds",
-                "The server's uptime",
-                labelNames).WithExtendLifetimeOnUse();
+            if (this.uptime == null)
+            {
+                this.uptime = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}uptime_seconds",
+                        "The server's uptime")
+                    .WithExtendLifetimeOnUse();
+            }
 
             if (this.includeServerSettings)
             {
-                this.baseCampMaxNum = this.metricFactory.CreateGauge(
-                    $"{MetricNamePrefix}base_camp_max_num",
-                    "The maximum amount of base camps allowed in the server's game world",
-                    labelNames).WithExtendLifetimeOnUse();
+                if (this.baseCampMaxNum == null)
+                {
+                    this.baseCampMaxNum = this.metricFactory
+                        .CreateGauge(
+                            $"{MetricNamePrefix}base_camp_max_num",
+                            "The maximum amount of base camps allowed in the server's game world")
+                        .WithExtendLifetimeOnUse();
+                }
 
-                this.baseCampMaxNumInGuild = this.metricFactory.CreateGauge(
-                    $"{MetricNamePrefix}base_camp_max_num_in_guild",
-                    "The maximum amount of base camps allowed per guild",
-                    labelNames).WithExtendLifetimeOnUse();
+                if (this.baseCampMaxNumInGuild == null)
+                {
+                    this.baseCampMaxNumInGuild = this.metricFactory
+                        .CreateGauge(
+                            $"{MetricNamePrefix}base_camp_max_num_in_guild",
+                            "The maximum amount of base camps allowed per guild")
+                        .WithExtendLifetimeOnUse();
+                }
 
-                this.baseCampWorkerMaxNum = this.metricFactory.CreateGauge(
-                    $"{MetricNamePrefix}base_camp_worker_max_num",
-                    "The maximum amount of workers allowed in a base camp",
-                    labelNames).WithExtendLifetimeOnUse();
+                if (this.baseCampWorkerMaxNum == null)
+                {
+                    this.baseCampWorkerMaxNum = this.metricFactory
+                        .CreateGauge(
+                            $"{MetricNamePrefix}base_camp_worker_max_num",
+                            "The maximum amount of workers allowed in a base camp")
+                        .WithExtendLifetimeOnUse();
+                }
 
-                this.itemContainerForceMarkDirtyInterval = this.metricFactory.CreateGauge(
-                    $"{MetricNamePrefix}item_container_force_mark_dirty_interval_seconds",
-                    "Synchronization interval when a player is viewing a container's contents",
-                    labelNames).WithExtendLifetimeOnUse();
+                if (this.itemContainerForceMarkDirtyInterval == null)
+                {
+                    this.itemContainerForceMarkDirtyInterval = this.metricFactory
+                        .CreateGauge(
+                            $"{MetricNamePrefix}item_container_force_mark_dirty_interval_seconds",
+                            "Synchronization interval when a player is viewing a container's contents")
+                        .WithExtendLifetimeOnUse();
+                }
 
-                this.maxBuildingLimitNum = this.metricFactory.CreateGauge(
-                    $"{MetricNamePrefix}max_building_limit_num",
-                    "The maximum amount of buildings allowed per player",
-                    labelNames).WithExtendLifetimeOnUse();
+                if (this.maxBuildingLimitNum == null)
+                {
+                    this.maxBuildingLimitNum = this.metricFactory
+                        .CreateGauge(
+                            $"{MetricNamePrefix}max_building_limit_num",
+                            "The maximum amount of buildings allowed per player")
+                        .WithExtendLifetimeOnUse();
+                }
 
-                this.physicsActiveDropItemMaxNum = this.metricFactory.CreateGauge(
-                    $"{MetricNamePrefix}physics_active_drop_item_max_num",
-                    "The maximum amount of dropped items which can have active physics behavior",
-                    labelNames).WithExtendLifetimeOnUse();
+                if (this.physicsActiveDropItemMaxNum == null)
+                {
+                    this.physicsActiveDropItemMaxNum = this.metricFactory
+                        .CreateGauge(
+                            $"{MetricNamePrefix}physics_active_drop_item_max_num",
+                            "The maximum amount of dropped items which can have active physics behavior")
+                        .WithExtendLifetimeOnUse();
+                }
 
-                this.serverReplicatePawnCullDistance = this.metricFactory.CreateGauge(
-                    $"{MetricNamePrefix}server_replicate_pawn_cull_distance",
-                    "The world distance within which players can see enemies, pals, and other players",
-                    labelNames).WithExtendLifetimeOnUse();
+                if (this.serverReplicatePawnCullDistance == null)
+                {
+                    this.serverReplicatePawnCullDistance = this.metricFactory
+                        .CreateGauge(
+                            $"{MetricNamePrefix}server_replicate_pawn_cull_distance",
+                            "The world distance within which players can see enemies, pals, and other players")
+                        .WithExtendLifetimeOnUse();
+                }
             }
         }
 
-        private static OrderedDictionary<string, string> FormatPlayerLabels(OrderedDictionary<string, string> serverLabels, PalServerPlayer player)
+        private void PreparePlayerMetrics(PalServerPlayer player)
         {
-            var labels = new OrderedDictionary<string, string>(serverLabels);
+            var playerId = player.PlayerId;
 
-            labels.Add("player_account_name", player.AccountName);
-            labels.Add("player_ip", player.Ip);
-            labels.Add("player_name", player.Name);
-            labels.Add("player_player_id", player.PlayerId);
-            labels.Add("player_user_id", player.UserId);
+            var newPlayerInfoLabels = new OrderedDictionary<string, string>();
+            newPlayerInfoLabels["player_account_name"] = player.AccountName;
+            newPlayerInfoLabels["player_id"] = player.PlayerId;
+            newPlayerInfoLabels["player_ip"] = player.Ip;
+            newPlayerInfoLabels["player_name"] = player.Name;
+            newPlayerInfoLabels["player_user_id"] = player.UserId;
 
-            return labels;
-        }
+            // If player info labels have changed, then re-create their info metric.
+            var forceCreatePlayerInfoMetric = false;
+            if (newPlayerInfoLabels.Count != this.infoLabels.Count || newPlayerInfoLabels.Except(this.infoLabels).Any())
+            {
+                this.playerInfoLabelsById[playerId] = newPlayerInfoLabels;
+                forceCreatePlayerInfoMetric = true;
+            }
 
-        private void CreatePlayerMetrics(string playerId)
-        {
-            var labelNames = this.playerLabelsById[playerId].Keys.ToArray();
+            if (forceCreatePlayerInfoMetric || !this.playerInfoById.ContainsKey(playerId))
+            {
+                this.playerInfoById[playerId] = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}player_info",
+                        "Player info",
+                        this.playerInfoLabelsById[playerId].Keys.ToArray())
+                    .WithExtendLifetimeOnUse();
+            }
 
-            this.playerPingById[playerId] = this.metricFactory.CreateGauge(
-                $"{MetricNamePrefix}player_ping_seconds",
-                "Player's ping to the game server",
-                labelNames).WithExtendLifetimeOnUse();
+            if (!this.playerPingById.ContainsKey(playerId))
+            {
+                this.playerPingById[playerId] = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}player_ping_seconds",
+                        "Player's ping to the game server",
+                        ["player_id"])
+                    .WithExtendLifetimeOnUse();
+            }
 
-            this.playerLocationXById[playerId] = this.metricFactory.CreateGauge(
-                $"{MetricNamePrefix}player_location_x",
-                "Player's x-axis world coordinate",
-                labelNames).WithExtendLifetimeOnUse();
+            if (!this.playerLocationXById.ContainsKey(playerId))
+            {
+                this.playerLocationXById[playerId] = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}player_location_x",
+                        "Player's x-axis world coordinate",
+                        ["player_id"])
+                    .WithExtendLifetimeOnUse();
+            }
 
-            this.playerLocationYById[playerId] = this.metricFactory.CreateGauge(
-                $"{MetricNamePrefix}player_location_y",
-                "Player's y-axis world coordinate",
-                labelNames).WithExtendLifetimeOnUse();
+            if (!this.playerLocationYById.ContainsKey(playerId))
+            {
+                this.playerLocationYById[playerId] = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}player_location_y",
+                        "Player's y-axis world coordinate",
+                        ["player_id"])
+                    .WithExtendLifetimeOnUse();
+            }
 
-            this.playerLevelById[playerId] = this.metricFactory.CreateGauge(
-                $"{MetricNamePrefix}player_level",
-                "Player's character level",
-                labelNames).WithExtendLifetimeOnUse();
+            if (!this.playerLevelById.ContainsKey(playerId))
+            {
+                this.playerLevelById[playerId] = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}player_level",
+                        "Player's character level",
+                        ["player_id"])
+                    .WithExtendLifetimeOnUse();
+            }
         }
 
         public void Update(PalServerInfo info, PalServerMetrics metrics, PalServerPlayers players, PalServerSettings settings)
         {
-            var newLabels = FormatServerLabels(info);
+            this.PrepareServerMetrics(info);
 
-            // If labels have changed, then register new metrics with those labels.
-            if (newLabels.Count != this.labels.Count || newLabels.Except(this.labels).Any())
-            {
-                this.labels = newLabels;
-                this.CreateServerMetrics();
-            }
-
-            var labelValues = this.labels.Values.ToArray();
-
-            this.currentPlayerNum.WithLabels(labelValues).Set(metrics.CurrentPlayerNum);
-            this.serverFps.WithLabels(labelValues).Set(metrics.ServerFps);
-            this.serverFrameTime.WithLabels(labelValues).Set(metrics.ServerFrameTime / 1000.0);
-            this.days.WithLabels(labelValues).Set(metrics.Days);
-            this.maxPlayerNum.WithLabels(labelValues).Set(metrics.MaxPlayerNum);
-            this.baseCampNum.WithLabels(labelValues).Set(metrics.BaseCampNum);
-            this.uptime.WithLabels(labelValues).Set(metrics.Uptime);
+            this.infoMetric.WithLabels(this.infoLabels.Values.ToArray()).Set(1.0);
+            this.currentPlayerNum.WithLabels().Set(metrics.CurrentPlayerNum);
+            this.serverFps.WithLabels().Set(metrics.ServerFps);
+            this.serverFrameTime.WithLabels().Set(metrics.ServerFrameTime / 1000.0);
+            this.days.WithLabels().Set(metrics.Days);
+            this.maxPlayerNum.WithLabels().Set(metrics.MaxPlayerNum);
+            this.baseCampNum.WithLabels().Set(metrics.BaseCampNum);
+            this.uptime.WithLabels().Set(metrics.Uptime);
 
             if (this.includePlayerData)
             {
                 // Check if each previously-seen player ID has disconnected.
-                var disconnectedPlayerIds = new HashSet<string>(this.playerLabelsById.Keys);
+                var disconnectedPlayerIds = new HashSet<string>(this.playerInfoById.Keys);
 
                 foreach (var player in players.Players)
                 {
@@ -218,34 +308,20 @@ namespace PalServerMetricsExporter
                     }
 
                     // If the player hasn't been seen before OR if labels have changed, then register new metrics for the player.
-                    var newPlayerLabels = FormatPlayerLabels(this.labels, player);
-                    var shouldCreatePlayerMetrics = false;
-                    if (!this.playerLabelsById.TryGetValue(player.PlayerId, out var playerLabels))
-                    {
-                        shouldCreatePlayerMetrics = true;
-                    }
-                    else if (newPlayerLabels.Count != playerLabels.Count || newPlayerLabels.Except(playerLabels).Any())
-                    {
-                        shouldCreatePlayerMetrics = true;
-                    }
-                    if (shouldCreatePlayerMetrics)
-                    {
-                        this.playerLabelsById[player.PlayerId] = newPlayerLabels;
-                        this.CreatePlayerMetrics(player.PlayerId);
-                    }
+                    this.PreparePlayerMetrics(player);
 
-                    var playerLabelValues = this.playerLabelsById[player.PlayerId].Values.ToArray();
-
-                    this.playerPingById[player.PlayerId].WithLabels(playerLabelValues).Set(player.Ping / 1000.0);
-                    this.playerLocationXById[player.PlayerId].WithLabels(playerLabelValues).Set(player.LocationX);
-                    this.playerLocationYById[player.PlayerId].WithLabels(playerLabelValues).Set(player.LocationY);
-                    this.playerLevelById[player.PlayerId].WithLabels(playerLabelValues).Set(player.Level);
+                    this.playerInfoById[player.PlayerId].WithLabels(this.playerInfoLabelsById[player.PlayerId].Values.ToArray()).Set(1.0);
+                    this.playerPingById[player.PlayerId].WithLabels([player.PlayerId]).Set(player.Ping / 1000.0);
+                    this.playerLocationXById[player.PlayerId].WithLabels([player.PlayerId]).Set(player.LocationX);
+                    this.playerLocationYById[player.PlayerId].WithLabels([player.PlayerId]).Set(player.LocationY);
+                    this.playerLevelById[player.PlayerId].WithLabels([player.PlayerId]).Set(player.Level);
                 }
 
                 // Forget metrics for previously-seen players who are no longer connected.
                 foreach (var playerId in disconnectedPlayerIds)
                 {
-                    this.playerLabelsById.Remove(playerId);
+                    this.playerInfoById.Remove(playerId);
+                    this.playerInfoLabelsById.Remove(playerId);
                     this.playerPingById.Remove(playerId);
                     this.playerLocationXById.Remove(playerId);
                     this.playerLocationYById.Remove(playerId);
@@ -255,13 +331,13 @@ namespace PalServerMetricsExporter
 
             if (this.includeServerSettings)
             {
-                this.baseCampMaxNum.WithLabels(labelValues).Set(settings.BaseCampMaxNum);
-                this.baseCampMaxNumInGuild.WithLabels(labelValues).Set(settings.BaseCampMaxNumInGuild);
-                this.baseCampWorkerMaxNum.WithLabels(labelValues).Set(settings.BaseCampWorkerMaxNum);
-                this.itemContainerForceMarkDirtyInterval.WithLabels(labelValues).Set(settings.ItemContainerForceMarkDirtyInterval);
-                this.maxBuildingLimitNum.WithLabels(labelValues).Set(settings.MaxBuildingLimitNum);
-                this.physicsActiveDropItemMaxNum.WithLabels(labelValues).Set(settings.PhysicsActiveDropItemMaxNum);
-                this.serverReplicatePawnCullDistance.WithLabels(labelValues).Set(settings.ServerReplicatePawnCullDistance);
+                this.baseCampMaxNum.WithLabels().Set(settings.BaseCampMaxNum);
+                this.baseCampMaxNumInGuild.WithLabels().Set(settings.BaseCampMaxNumInGuild);
+                this.baseCampWorkerMaxNum.WithLabels().Set(settings.BaseCampWorkerMaxNum);
+                this.itemContainerForceMarkDirtyInterval.WithLabels().Set(settings.ItemContainerForceMarkDirtyInterval);
+                this.maxBuildingLimitNum.WithLabels().Set(settings.MaxBuildingLimitNum);
+                this.physicsActiveDropItemMaxNum.WithLabels().Set(settings.PhysicsActiveDropItemMaxNum);
+                this.serverReplicatePawnCullDistance.WithLabels().Set(settings.ServerReplicatePawnCullDistance);
             }
 
             // TODO: When the server is running with `-enable-gamedata-api`, detailed
