@@ -28,27 +28,30 @@ docker run --rm \
 If this application is able to retrieve server metrics successfully, it will then publish Prometheus metrics at the configured port and path, for example `http://localhost:8213/metrics`
 
 ```
+# HELP palserver_info Server info
+# TYPE palserver_info gauge
+palserver_current_player_num{server_version="v1.0.4.102642",world_guid="1FBDF24927C44861849C2C57868607AC"} 1
 # HELP palserver_current_player_num The current number of players connected
 # TYPE palserver_current_player_num gauge
-palserver_current_player_num{server_version="v1.0.4.102642",world_guid="1FBDF24927C44861849C2C57868607AC"} 0
+palserver_current_player_num 0
 # HELP palserver_server_fps The server's current runtime frames per second
 # TYPE palserver_server_fps gauge
-palserver_server_fps{server_version="v1.0.4.102642",world_guid="1FBDF24927C44861849C2C57868607AC"} 59
+palserver_server_fps 59
 # HELP palserver_server_frame_time_seconds The server's processing time between frames
 # TYPE palserver_server_frame_time_seconds gauge
-palserver_server_frame_time_seconds{server_version="v1.0.4.102642",world_guid="1FBDF24927C44861849C2C57868607AC"} 0.016788549423217773
+palserver_server_frame_time_seconds 0.016788549423217773
 # HELP palserver_days The number of in-game days which have passed in the server's game world
 # TYPE palserver_days gauge
-palserver_days{server_version="v1.0.4.102642",world_guid="1FBDF24927C44861849C2C57868607AC"} 11
+palserver_days 11
 # HELP palserver_max_player_num The maximum amount of players allowed on the server
 # TYPE palserver_max_player_num gauge
-palserver_max_player_num{server_version="v1.0.4.102642",world_guid="1FBDF24927C44861849C2C57868607AC"} 32
+palserver_max_player_num 32
 # HELP palserver_base_camp_num The current number of base camps
 # TYPE palserver_base_camp_num gauge
-palserver_base_camp_num{server_version="v1.0.4.102642",world_guid="1FBDF24927C44861849C2C57868607AC"} 0
+palserver_base_camp_num 0
 # HELP palserver_uptime_seconds The server's uptime
 # TYPE palserver_uptime_seconds gauge
-palserver_uptime_seconds{server_version="v1.0.4.102642",world_guid="1FBDF24927C44861849C2C57868607AC"} 8
+palserver_uptime_seconds 8
 ...
 ```
 
