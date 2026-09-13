@@ -32,6 +32,7 @@ namespace PalServerMetricsExporter
             var includePlayerDataString = true.ToString();
             var ignoreZeroPingPlayersString = true.ToString();
             var includeServerSettingsString = true.ToString();
+            var includeGameDataString = false.ToString();
 
             var updateIntervalSecondsString = "15";
 
@@ -52,6 +53,7 @@ namespace PalServerMetricsExporter
                 { "include-player-data=", $"Include player data in exported metrics, default: {includePlayerDataString}", o => includePlayerDataString = o },
                 { "ignore-zero-ping-players=", $"When reporting player data, ignore data with a ping of zero, default: {ignoreZeroPingPlayersString}", o => ignoreZeroPingPlayersString = o },
                 { "include-server-settings=", $"Include server settings in exported metrics, default: {includeServerSettingsString}", o => includeServerSettingsString = o },
+                { "include-game-data=", $"Include game data in exported metrics, default: {includeGameDataString}", o => includeGameDataString = o },
 
                 { "update-interval-seconds", $"Interval (in seconds) between requesting updates from the target PalServer, default: {updateIntervalSecondsString}", o => updateIntervalSecondsString = o },
 
@@ -95,7 +97,7 @@ namespace PalServerMetricsExporter
             bool includePlayerData;
             if (!bool.TryParse(includePlayerDataString, out includePlayerData))
             {
-                throw new ArgumentException($"Failed to parse bool from include-server-data argument '{includePlayerDataString}'");
+                throw new ArgumentException($"Failed to parse bool from include-player-data argument '{includePlayerDataString}'");
             }
             bool ignoreZeroPingPlayers;
             if (!bool.TryParse(ignoreZeroPingPlayersString, out ignoreZeroPingPlayers))
@@ -106,6 +108,11 @@ namespace PalServerMetricsExporter
             if (!bool.TryParse(includeServerSettingsString, out includeServerSettings))
             {
                 throw new ArgumentException($"Failed to parse bool from include-server-settings argument '{includeServerSettingsString}'");
+            }
+            bool includeGameData;
+            if (!bool.TryParse(includeGameDataString, out includeGameData))
+            {
+                throw new ArgumentException($"Failed to parse bool from include-game-data argument '{includeGameDataString}'");
             }
 
             uint updateIntervalSeconds;
@@ -152,7 +159,12 @@ namespace PalServerMetricsExporter
             logger.LogInformation($"Configuring with target PalServer API: http://{palServerHost}:{palServerPort}");
             using (var apiClient = new PalServerApiClient(logger, palServerHost, palServerPort, palServerAdminPassword))
             {
-                var metricValues = new PalServerMetricsValues(metricFactory, includePlayerData, ignoreZeroPingPlayers, includeServerSettings);
+                var metricValues = new PalServerMetricsValues(
+                    metricFactory,
+                    includePlayerData,
+                    ignoreZeroPingPlayers,
+                    includeServerSettings,
+                    includeGameData);
 
                 // Loop forever, periodically requesting the server's metrics
                 // and updating this exporter's instrumentation accordingly.
@@ -186,13 +198,25 @@ namespace PalServerMetricsExporter
                             apiTasks.Add(settingsTask);
                         }
 
+                        Task<PalServerGameData> gameDataTask = null;
+                        if (includeGameData)
+                        {
+                            gameDataTask = apiClient.GetGameDataAsync();
+                            apiTasks.Add(gameDataTask);
+                        }
+
                         await Task.WhenAll(apiTasks);
 
-                        metricValues.Update(infoTask.Result, metricsTask.Result, playersTask?.Result, settingsTask?.Result);
+                        metricValues.Update(
+                            infoTask.Result,
+                            metricsTask.Result,
+                            playersTask?.Result,
+                            settingsTask?.Result,
+                            gameDataTask?.Result);
                     }
                     catch (Exception ex)
                     {
-                        logger.LogError(ex, "PalServer API request failed");
+                        logger.LogError(ex, "Metrics update failed");
                     }
 
                     updateTimer.Stop();

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -21,6 +22,7 @@ namespace PalServerMetricsExporter.PalServerApi
 
         private string baseUrl;
         private string encodedUserPassString;
+        private JsonSerializerSettings jsonSettings;
 
         public PalServerApiClient(
             ILogger logger,
@@ -46,6 +48,15 @@ namespace PalServerMetricsExporter.PalServerApi
 
             var userPassString = $"{AdminUsername}:{targetAdminPassword}";
             this.encodedUserPassString = Convert.ToBase64String(Encoding.UTF8.GetBytes(userPassString));
+
+            this.jsonSettings = new JsonSerializerSettings()
+            {
+                TypeNameHandling = TypeNameHandling.Objects,
+                Converters = new List<JsonConverter>()
+                {
+                    new PalServerActorDataJsonConverter(),
+                },
+            };
         }
 
         public void Dispose()
@@ -88,9 +99,14 @@ namespace PalServerMetricsExporter.PalServerApi
                     throw new AggregateException(responseText, ex);
                 }
 
-                var responseObject = JsonConvert.DeserializeObject<T>(responseText);
+                var responseObject = JsonConvert.DeserializeObject<T>(responseText, this.jsonSettings);
                 return responseObject;
             }
+        }
+
+        public async Task<PalServerGameData> GetGameDataAsync()
+        {
+            return await this.GetApiResponseObjectAsync<PalServerGameData>("game-data");
         }
 
         public async Task<PalServerInfo> GetInfoAsync()
