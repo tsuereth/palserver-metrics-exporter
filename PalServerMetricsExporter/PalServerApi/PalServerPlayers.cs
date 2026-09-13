@@ -8,6 +8,6 @@ namespace PalServerMetricsExporter.PalServerApi
     public class PalServerPlayers
     {
         [JsonProperty("players")]
-        public List<PalServerPlayer> Players { get; set; } = new List<PalServerPlayer>();
+        public List<PalServerPlayer> Players { get; set; } = new();
     }
 }

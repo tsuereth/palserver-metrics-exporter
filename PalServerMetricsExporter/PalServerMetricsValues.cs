@@ -9,11 +9,14 @@ namespace PalServerMetricsExporter
     {
         private const string MetricNamePrefix = "palserver_";
 
+        private const string UnknownActorType = "unknown";
+
         private readonly IManagedLifetimeMetricFactory metricFactory;
 
         private bool includePlayerData;
         private bool ignoreZeroPingPlayers;
         private bool includeServerSettings;
+        private bool includeGameData;
 
         // Server operational and performance metrics
         private ICollector<IGauge> infoMetric;
@@ -43,14 +46,25 @@ namespace PalServerMetricsExporter
         private ICollector<IGauge> physicsActiveDropItemMaxNum;
         private ICollector<IGauge> serverReplicatePawnCullDistance;
 
-        public PalServerMetricsValues(IManagedLifetimeMetricFactory metricFactory, bool includePlayerData, bool ignoreZeroPingPlayers, bool includeServerSettings)
+        // Game data metrics
+        private HashSet<string> actorTypes = new();
+        private ICollector<IGauge> actorNum;
+
+        public PalServerMetricsValues(
+            IManagedLifetimeMetricFactory metricFactory,
+            bool includePlayerData,
+            bool ignoreZeroPingPlayers,
+            bool includeServerSettings,
+            bool includeGameData)
         {
             this.metricFactory = metricFactory;
 
             this.includePlayerData = includePlayerData;
             this.ignoreZeroPingPlayers = ignoreZeroPingPlayers;
             this.includeServerSettings = includeServerSettings;
+            this.includeGameData = includeGameData;
         }
+
         private void PrepareServerMetrics(PalServerInfo info)
         {
             var newInfoLabels = new OrderedDictionary<string, string>();
@@ -203,6 +217,36 @@ namespace PalServerMetricsExporter
                         .WithExtendLifetimeOnUse();
                 }
             }
+
+            if (this.includeGameData)
+            {
+                // NOTE: At present, possible actor types are defined at compile-time.
+                // They "could" be dynamically discovered, hypothetically speaking.
+                var newActorTypes = new HashSet<string>();
+                foreach (var actorType in PalServerCharacterActor.UnitTypes)
+                {
+                    newActorTypes.Add(actorType);
+                }
+                newActorTypes.Add(PalServerPalBoxActor.PalBoxActorType);
+
+                // If actor types have changed, then re-create actor metrics.
+                var forceCreateActorMetrics = false;
+                if (newActorTypes.Count != this.actorTypes.Count || newActorTypes.Except(this.actorTypes).Any())
+                {
+                    this.actorTypes = newActorTypes;
+                    forceCreateActorMetrics = true;
+                }
+
+                if (forceCreateActorMetrics || this.actorNum == null)
+                {
+                    this.actorNum = this.metricFactory
+                        .CreateGauge(
+                            $"{MetricNamePrefix}actor_num",
+                            "The current number of actors in game data",
+                            ["actor_type"])
+                        .WithExtendLifetimeOnUse();
+                }
+            }
         }
 
         private void PreparePlayerMetrics(PalServerPlayer player)
@@ -275,7 +319,12 @@ namespace PalServerMetricsExporter
             }
         }
 
-        public void Update(PalServerInfo info, PalServerMetrics metrics, PalServerPlayers players, PalServerSettings settings)
+        public void Update(
+            PalServerInfo info,
+            PalServerMetrics metrics,
+            PalServerPlayers players,
+            PalServerSettings settings,
+            PalServerGameData gameData)
         {
             this.PrepareServerMetrics(info);
 
@@ -340,8 +389,48 @@ namespace PalServerMetricsExporter
                 this.serverReplicatePawnCullDistance.WithLabels().Set(settings.ServerReplicatePawnCullDistance);
             }
 
-            // TODO: When the server is running with `-enable-gamedata-api`, detailed
-            // game-state data is available from its `/v1/api/game-data` response.
+            if (this.includeGameData)
+            {
+                // Ensure an initial value for each known actor-type.
+                var actorNumByType = new Dictionary<string, int>();
+                foreach (var actorType in this.actorTypes)
+                {
+                    actorNumByType[actorType] = 0;
+                }
+                actorNumByType[UnknownActorType] = 0;
+
+                foreach (var gameDataActor in gameData.ActorData)
+                {
+                    string actorType;
+                    if (gameDataActor is PalServerCharacterActor)
+                    {
+                        var characterActor = gameDataActor as PalServerCharacterActor;
+                        actorType = characterActor.UnitType;
+                    }
+                    else if (gameDataActor is PalServerPalBoxActor)
+                    {
+                        actorType = PalServerPalBoxActor.PalBoxActorType;
+                    }
+                    else
+                    {
+                        actorType = UnknownActorType;
+                    }
+
+                    if (this.actorTypes.Contains(actorType))
+                    {
+                        actorNumByType[actorType] = actorNumByType[actorType] + 1;
+                    }
+                    else
+                    {
+                        actorNumByType[UnknownActorType] = actorNumByType[UnknownActorType] + 1;
+                    }
+                }
+
+                foreach (var actorNumPair in actorNumByType)
+                {
+                    this.actorNum.WithLabels(actorNumPair.Key).Set(actorNumPair.Value);
+                }
+            }
         }
     }
 }

@@ -93,6 +93,8 @@ The Palworld server's REST API requires HTTP Basic authentication. The username 
 - `--include-server-settings=` (default: `true`) sets whether or not server settings are included in exported metrics.
   - Not all server settings will be exported, only settings which are considered relevant to server performance and/or monitoring.
   - These settings will not generally change while a server is running, but recording those settings alongside other metrics could assist in later performance analysis.
+- `--include-game-data=` (default: `false`) sets whether or not game data (world actor snapshots) are included in exported metrics.
+  - Palworld servers do not provide this data by default; the `-enable-gamedata-api` server command-line option enables it.
 
 ## Update frequency
 
