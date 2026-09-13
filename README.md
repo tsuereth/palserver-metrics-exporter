@@ -33,25 +33,34 @@ If this application is able to retrieve server metrics successfully, it will the
 palserver_info{server_version="v1.0.4.102642",world_guid="1FBDF24927C44861849C2C57868607AC"} 1
 # HELP palserver_current_player_num The current number of players connected
 # TYPE palserver_current_player_num gauge
-palserver_current_player_num 0
+palserver_current_player_num 1
 # HELP palserver_server_fps The server's current runtime frames per second
 # TYPE palserver_server_fps gauge
 palserver_server_fps 59
 # HELP palserver_server_frame_time_seconds The server's processing time between frames
 # TYPE palserver_server_frame_time_seconds gauge
-palserver_server_frame_time_seconds 0.016788549423217773
+palserver_server_frame_time_seconds 0.01674531936645508
 # HELP palserver_days The number of in-game days which have passed in the server's game world
 # TYPE palserver_days gauge
-palserver_days 11
+palserver_days 59
 # HELP palserver_max_player_num The maximum amount of players allowed on the server
 # TYPE palserver_max_player_num gauge
 palserver_max_player_num 32
 # HELP palserver_base_camp_num The current number of base camps
 # TYPE palserver_base_camp_num gauge
-palserver_base_camp_num 0
+palserver_base_camp_num 2
 # HELP palserver_uptime_seconds The server's uptime
 # TYPE palserver_uptime_seconds gauge
-palserver_uptime_seconds 8
+palserver_uptime_seconds 289
+# HELP palserver_actor_num The current number of actors in game data
+# TYPE palserver_actor_num gauge
+palserver_actor_num{actor_type="BaseCampPal"} 25
+palserver_actor_num{actor_type="NPC"} 1
+palserver_actor_num{actor_type="OtomoPal"} 0
+palserver_actor_num{actor_type="Player"} 1
+palserver_actor_num{actor_type="WildPal"} 6
+palserver_actor_num{actor_type="PalBox"} 2
+palserver_actor_num{actor_type="unknown"} 0
 ...
 ```
 
