@@ -8,6 +8,6 @@ namespace PalServerMetricsExporter.PalServerApi
     {
         public const string PalBoxActorType = "PalBox";
 
-        // NOTE: This actor data-type has no additional properties.
+        public string Name { get; set; }
     }
 }

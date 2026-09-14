@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using PalServerMetricsExporter.PalServerApi;
 using Prometheus;
 
@@ -9,7 +11,11 @@ namespace PalServerMetricsExporter
     {
         private const string MetricNamePrefix = "palserver_";
 
-        private const string UnknownActorType = "unknown";
+        // Game data's "In Game Time" is represented like a clock,
+        // with two digits for Hours ':' two digits for Minutes.
+        private static readonly Regex GameDataInGameTimePattern = new Regex(
+            @"(?<Hours>[0-9]+):(?<Minutes>[0-9]+)",
+            RegexOptions.Compiled);
 
         private readonly IManagedLifetimeMetricFactory metricFactory;
 
@@ -24,18 +30,23 @@ namespace PalServerMetricsExporter
         private ICollector<IGauge> currentPlayerNum;
         private ICollector<IGauge> serverFps;
         private ICollector<IGauge> serverFrameTime;
-        private ICollector<IGauge> days;
+        private ICollector<IGauge> worldAgeSeconds;
         private ICollector<IGauge> maxPlayerNum;
         private ICollector<IGauge> baseCampNum;
-        private ICollector<IGauge> uptime;
+        private ICollector<IGauge> uptimeSeconds;
 
         // Per-player metrics
-        private Dictionary<string, ICollector<IGauge>> playerInfoById = new();
-        private Dictionary<string, OrderedDictionary<string, string>> playerInfoLabelsById = new();
-        private Dictionary<string, ICollector<IGauge>> playerPingById = new();
-        private Dictionary<string, ICollector<IGauge>> playerLocationXById = new();
-        private Dictionary<string, ICollector<IGauge>> playerLocationYById = new();
-        private Dictionary<string, ICollector<IGauge>> playerLevelById = new();
+        private sealed class PlayerMetrics
+        {
+            public ICollector<IGauge> infoMetric;
+            public OrderedDictionary<string, string> infoLabels = new();
+            public ICollector<IGauge> pingSeconds;
+            public ICollector<IGauge> locationX;
+            public ICollector<IGauge> locationY;
+            public ICollector<IGauge> level;
+        }
+
+        private Dictionary<string, PlayerMetrics> playerMetricsByUserId = new();
 
         // Server settings metrics
         private ICollector<IGauge> baseCampMaxNum;
@@ -47,8 +58,16 @@ namespace PalServerMetricsExporter
         private ICollector<IGauge> serverReplicatePawnCullDistance;
 
         // Game data metrics
-        private HashSet<string> actorTypes = new();
-        private ICollector<IGauge> actorNum;
+        private sealed class ActorMetrics
+        {
+            public ICollector<IGauge> infoMetric;
+            public OrderedDictionary<string, string> infoLabels = new();
+            public ICollector<IGauge> locationX;
+            public ICollector<IGauge> locationY;
+            public ICollector<IGauge> locationZ;
+        }
+
+        private Dictionary<string, ActorMetrics> actorMetricsByActorId = new();
 
         public PalServerMetricsValues(
             IManagedLifetimeMetricFactory metricFactory,
@@ -116,12 +135,12 @@ namespace PalServerMetricsExporter
                     .WithExtendLifetimeOnUse();
             }
 
-            if (this.days == null)
+            if (this.worldAgeSeconds == null)
             {
-                this.days = this.metricFactory
+                this.worldAgeSeconds = this.metricFactory
                     .CreateGauge(
-                        $"{MetricNamePrefix}days",
-                        "The number of in-game days which have passed in the server's game world")
+                        $"{MetricNamePrefix}world_age_seconds",
+                        "The amount of time which has passed in the server's game world")
                     .WithExtendLifetimeOnUse();
             }
 
@@ -143,9 +162,9 @@ namespace PalServerMetricsExporter
                     .WithExtendLifetimeOnUse();
             }
 
-            if (this.uptime == null)
+            if (this.uptimeSeconds == null)
             {
-                this.uptime = this.metricFactory
+                this.uptimeSeconds = this.metricFactory
                     .CreateGauge(
                         $"{MetricNamePrefix}uptime_seconds",
                         "The server's uptime")
@@ -217,41 +236,11 @@ namespace PalServerMetricsExporter
                         .WithExtendLifetimeOnUse();
                 }
             }
-
-            if (this.includeGameData)
-            {
-                // NOTE: At present, possible actor types are defined at compile-time.
-                // They "could" be dynamically discovered, hypothetically speaking.
-                var newActorTypes = new HashSet<string>();
-                foreach (var actorType in PalServerCharacterActor.UnitTypes)
-                {
-                    newActorTypes.Add(actorType);
-                }
-                newActorTypes.Add(PalServerPalBoxActor.PalBoxActorType);
-
-                // If actor types have changed, then re-create actor metrics.
-                var forceCreateActorMetrics = false;
-                if (newActorTypes.Count != this.actorTypes.Count || newActorTypes.Except(this.actorTypes).Any())
-                {
-                    this.actorTypes = newActorTypes;
-                    forceCreateActorMetrics = true;
-                }
-
-                if (forceCreateActorMetrics || this.actorNum == null)
-                {
-                    this.actorNum = this.metricFactory
-                        .CreateGauge(
-                            $"{MetricNamePrefix}actor_num",
-                            "The current number of actors in game data",
-                            ["actor_type"])
-                        .WithExtendLifetimeOnUse();
-                }
-            }
         }
 
         private void PreparePlayerMetrics(PalServerPlayer player)
         {
-            var playerId = player.PlayerId;
+            var userId = player.UserId;
 
             var newPlayerInfoLabels = new OrderedDictionary<string, string>();
             newPlayerInfoLabels["player_account_name"] = player.AccountName;
@@ -262,59 +251,183 @@ namespace PalServerMetricsExporter
 
             // If player info labels have changed, then re-create their info metric.
             var forceCreatePlayerInfoMetric = false;
-            if (newPlayerInfoLabels.Count != this.infoLabels.Count || newPlayerInfoLabels.Except(this.infoLabels).Any())
+            if (!this.playerMetricsByUserId.ContainsKey(userId))
             {
-                this.playerInfoLabelsById[playerId] = newPlayerInfoLabels;
+                this.playerMetricsByUserId.Add(userId, new PlayerMetrics());
+                this.playerMetricsByUserId[userId].infoLabels = newPlayerInfoLabels;
                 forceCreatePlayerInfoMetric = true;
             }
-
-            if (forceCreatePlayerInfoMetric || !this.playerInfoById.ContainsKey(playerId))
+            else
             {
-                this.playerInfoById[playerId] = this.metricFactory
+                if (newPlayerInfoLabels.Count != this.playerMetricsByUserId[userId].infoLabels.Count || newPlayerInfoLabels.Except(this.playerMetricsByUserId[userId].infoLabels).Any())
+                {
+                    this.playerMetricsByUserId[userId].infoLabels = newPlayerInfoLabels;
+                    forceCreatePlayerInfoMetric = true;
+                }
+            }
+
+            if (forceCreatePlayerInfoMetric || this.playerMetricsByUserId[userId].infoMetric == null)
+            {
+                this.playerMetricsByUserId[userId].infoMetric = this.metricFactory
                     .CreateGauge(
                         $"{MetricNamePrefix}player_info",
                         "Player info",
-                        this.playerInfoLabelsById[playerId].Keys.ToArray())
+                        this.playerMetricsByUserId[userId].infoLabels.Keys.ToArray())
                     .WithExtendLifetimeOnUse();
             }
 
-            if (!this.playerPingById.ContainsKey(playerId))
+            if (this.playerMetricsByUserId[userId].pingSeconds == null)
             {
-                this.playerPingById[playerId] = this.metricFactory
+                this.playerMetricsByUserId[userId].pingSeconds = this.metricFactory
                     .CreateGauge(
                         $"{MetricNamePrefix}player_ping_seconds",
                         "Player's ping to the game server",
-                        ["player_id"])
+                        ["player_user_id"])
                     .WithExtendLifetimeOnUse();
             }
 
-            if (!this.playerLocationXById.ContainsKey(playerId))
+            if (this.playerMetricsByUserId[userId].locationX == null)
             {
-                this.playerLocationXById[playerId] = this.metricFactory
+                this.playerMetricsByUserId[userId].locationX = this.metricFactory
                     .CreateGauge(
                         $"{MetricNamePrefix}player_location_x",
                         "Player's x-axis world coordinate",
-                        ["player_id"])
+                        ["player_user_id"])
                     .WithExtendLifetimeOnUse();
             }
 
-            if (!this.playerLocationYById.ContainsKey(playerId))
+            if (this.playerMetricsByUserId[userId].locationY == null)
             {
-                this.playerLocationYById[playerId] = this.metricFactory
+                this.playerMetricsByUserId[userId].locationY = this.metricFactory
                     .CreateGauge(
                         $"{MetricNamePrefix}player_location_y",
                         "Player's y-axis world coordinate",
-                        ["player_id"])
+                        ["player_user_id"])
                     .WithExtendLifetimeOnUse();
             }
 
-            if (!this.playerLevelById.ContainsKey(playerId))
+            if (this.playerMetricsByUserId[userId].level == null)
             {
-                this.playerLevelById[playerId] = this.metricFactory
+                this.playerMetricsByUserId[userId].level = this.metricFactory
                     .CreateGauge(
                         $"{MetricNamePrefix}player_level",
                         "Player's character level",
-                        ["player_id"])
+                        ["player_user_id"])
+                    .WithExtendLifetimeOnUse();
+            }
+        }
+
+        private static string GetActorId(PalServerActorData actor)
+        {
+            if (actor is PalServerCharacterActor)
+            {
+                var characterActor = actor as PalServerCharacterActor;
+                return characterActor.InstanceId;
+            }
+            else if (actor is PalServerPalBoxActor)
+            {
+                var palBoxActor = actor as PalServerPalBoxActor;
+                return palBoxActor.Name;
+            }
+
+            throw new NotImplementedException($"Unable to determine a unique ID for actor of Type '{actor.Type}'");
+        }
+
+        private static string GetActorName(PalServerActorData actor)
+        {
+            if (actor is PalServerCharacterActor)
+            {
+                var characterActor = actor as PalServerCharacterActor;
+                return characterActor.NickName;
+            }
+            else if (actor is PalServerPalBoxActor)
+            {
+                var palBoxActor = actor as PalServerPalBoxActor;
+                return palBoxActor.Name;
+            }
+
+            return actor.Type;
+        }
+
+        private static string GetActorType(PalServerActorData actor)
+        {
+            if (actor is PalServerCharacterActor)
+            {
+                var characterActor = actor as PalServerCharacterActor;
+                return characterActor.UnitType;
+            }
+            else if (actor is PalServerPalBoxActor)
+            {
+                return PalServerPalBoxActor.PalBoxActorType;
+            }
+
+            return actor.Type;
+        }
+
+        private void PrepareActorMetrics(PalServerActorData actor)
+        {
+            var actorId = GetActorId(actor);
+
+            var newActorInfoLabels = new OrderedDictionary<string, string>();
+            newActorInfoLabels["actor_class"] = actor.Class;
+            newActorInfoLabels["actor_id"] = actorId;
+            newActorInfoLabels["actor_name"] = GetActorName(actor);
+            newActorInfoLabels["actor_type"] = GetActorType(actor);
+
+            // If actor info labels have changed, then re-create their info metric.
+            var forceCreateActorInfoMetric = false;
+            if (!this.actorMetricsByActorId.ContainsKey(actorId))
+            {
+                this.actorMetricsByActorId.Add(actorId, new ActorMetrics());
+                this.actorMetricsByActorId[actorId].infoLabels = newActorInfoLabels;
+                forceCreateActorInfoMetric = true;
+            }
+            else
+            {
+                if (newActorInfoLabels.Count != this.actorMetricsByActorId[actorId].infoLabels.Count || newActorInfoLabels.Except(this.actorMetricsByActorId[actorId].infoLabels).Any())
+                {
+                    this.actorMetricsByActorId[actorId].infoLabels = newActorInfoLabels;
+                    forceCreateActorInfoMetric = true;
+                }
+            }
+
+            if (forceCreateActorInfoMetric || this.actorMetricsByActorId[actorId].infoMetric == null)
+            {
+                this.actorMetricsByActorId[actorId].infoMetric = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}actor_info",
+                        "Actor info",
+                        this.actorMetricsByActorId[actorId].infoLabels.Keys.ToArray())
+                    .WithExtendLifetimeOnUse();
+            }
+
+            if (this.actorMetricsByActorId[actorId].locationX == null)
+            {
+                this.actorMetricsByActorId[actorId].locationX = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}actor_location_x",
+                        "Actor's x-axis world coordinate",
+                        ["actor_id"])
+                    .WithExtendLifetimeOnUse();
+            }
+
+            if (this.actorMetricsByActorId[actorId].locationY == null)
+            {
+                this.actorMetricsByActorId[actorId].locationY = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}actor_location_y",
+                        "Actor's y-axis world coordinate",
+                        ["actor_id"])
+                    .WithExtendLifetimeOnUse();
+            }
+
+            if (this.actorMetricsByActorId[actorId].locationZ == null)
+            {
+                this.actorMetricsByActorId[actorId].locationZ = this.metricFactory
+                    .CreateGauge(
+                        $"{MetricNamePrefix}actor_location_z",
+                        "Actor's character level",
+                        ["actor_id"])
                     .WithExtendLifetimeOnUse();
             }
         }
@@ -330,21 +443,59 @@ namespace PalServerMetricsExporter
 
             this.infoMetric.WithLabels(this.infoLabels.Values.ToArray()).Set(1.0);
             this.currentPlayerNum.WithLabels().Set(metrics.CurrentPlayerNum);
-            this.serverFps.WithLabels().Set(metrics.ServerFps);
             this.serverFrameTime.WithLabels().Set(metrics.ServerFrameTime / 1000.0);
-            this.days.WithLabels().Set(metrics.Days);
             this.maxPlayerNum.WithLabels().Set(metrics.MaxPlayerNum);
             this.baseCampNum.WithLabels().Set(metrics.BaseCampNum);
-            this.uptime.WithLabels().Set(metrics.Uptime);
+            this.uptimeSeconds.WithLabels().Set(metrics.Uptime);
+
+            // The Metrics response only reveals the world's age in a whole number of Days.
+            var worldAge = TimeSpan.FromDays(metrics.Days);
+
+            // Some metrics will use "Game Data" details if available,
+            // or will fall back to simple "Metrics" values if not.
+            if (this.includeGameData)
+            {
+                this.serverFps.WithLabels().Set(gameData.Fps);
+
+                // Game Data includes a clock showing the time within the current in-game day.
+                var inGameTimeParts = GameDataInGameTimePattern.Match(gameData.InGameTime);
+                if (inGameTimeParts != null)
+                {
+                    var hoursString = inGameTimeParts.Groups["Hours"].Value;
+                    if (int.TryParse(hoursString, out var hours))
+                    {
+                        worldAge += TimeSpan.FromHours(hours);
+                    }
+
+                    var minutesString = inGameTimeParts.Groups["Minutes"].Value;
+                    if (int.TryParse(minutesString, out var minutes))
+                    {
+                        worldAge += TimeSpan.FromMinutes(minutes);
+                    }
+                }
+            }
+            else
+            {
+                this.serverFps.WithLabels().Set(metrics.ServerFps);
+            }
+
+            this.worldAgeSeconds.WithLabels().Set(worldAge.TotalSeconds);
 
             if (this.includePlayerData)
             {
-                // Check if each previously-seen player ID has disconnected.
-                var disconnectedPlayerIds = new HashSet<string>(this.playerInfoById.Keys);
+                // Check if each previously-seen user ID has disconnected.
+                var disconnectedUserIds = new HashSet<string>(this.playerMetricsByUserId.Keys);
 
                 foreach (var player in players.Players)
                 {
-                    disconnectedPlayerIds.Remove(player.PlayerId);
+                    // If our key (the user ID) is empty, there's nothing we can do with this player.
+                    var userId = player.UserId;
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        continue;
+                    }
+
+                    disconnectedUserIds.Remove(userId);
 
                     if (this.ignoreZeroPingPlayers)
                     {
@@ -359,22 +510,17 @@ namespace PalServerMetricsExporter
                     // If the player hasn't been seen before OR if labels have changed, then register new metrics for the player.
                     this.PreparePlayerMetrics(player);
 
-                    this.playerInfoById[player.PlayerId].WithLabels(this.playerInfoLabelsById[player.PlayerId].Values.ToArray()).Set(1.0);
-                    this.playerPingById[player.PlayerId].WithLabels([player.PlayerId]).Set(player.Ping / 1000.0);
-                    this.playerLocationXById[player.PlayerId].WithLabels([player.PlayerId]).Set(player.LocationX);
-                    this.playerLocationYById[player.PlayerId].WithLabels([player.PlayerId]).Set(player.LocationY);
-                    this.playerLevelById[player.PlayerId].WithLabels([player.PlayerId]).Set(player.Level);
+                    this.playerMetricsByUserId[userId].infoMetric.WithLabels(this.playerMetricsByUserId[userId].infoLabels.Values.ToArray()).Set(1.0);
+                    this.playerMetricsByUserId[userId].pingSeconds.WithLabels([userId]).Set(player.Ping / 1000.0);
+                    this.playerMetricsByUserId[userId].locationX.WithLabels([userId]).Set(player.LocationX);
+                    this.playerMetricsByUserId[userId].locationY.WithLabels([userId]).Set(player.LocationY);
+                    this.playerMetricsByUserId[userId].level.WithLabels([userId]).Set(player.Level);
                 }
 
                 // Forget metrics for previously-seen players who are no longer connected.
-                foreach (var playerId in disconnectedPlayerIds)
+                foreach (var userId in disconnectedUserIds)
                 {
-                    this.playerInfoById.Remove(playerId);
-                    this.playerInfoLabelsById.Remove(playerId);
-                    this.playerPingById.Remove(playerId);
-                    this.playerLocationXById.Remove(playerId);
-                    this.playerLocationYById.Remove(playerId);
-                    this.playerLevelById.Remove(playerId);
+                    this.playerMetricsByUserId.Remove(userId);
                 }
             }
 
@@ -391,44 +537,33 @@ namespace PalServerMetricsExporter
 
             if (this.includeGameData)
             {
-                // Ensure an initial value for each known actor-type.
-                var actorNumByType = new Dictionary<string, int>();
-                foreach (var actorType in this.actorTypes)
-                {
-                    actorNumByType[actorType] = 0;
-                }
-                actorNumByType[UnknownActorType] = 0;
+                // Check if each previously-seen actor ID has been removed.
+                var removedActorIds = new HashSet<string>(this.actorMetricsByActorId.Keys);
 
-                foreach (var gameDataActor in gameData.ActorData)
+                foreach (var actor in gameData.ActorData)
                 {
-                    string actorType;
-                    if (gameDataActor is PalServerCharacterActor)
+                    // If our key is empty, there's nothing we can do with this actor.
+                    var actorId = GetActorId(actor);
+                    if (string.IsNullOrEmpty(actorId))
                     {
-                        var characterActor = gameDataActor as PalServerCharacterActor;
-                        actorType = characterActor.UnitType;
-                    }
-                    else if (gameDataActor is PalServerPalBoxActor)
-                    {
-                        actorType = PalServerPalBoxActor.PalBoxActorType;
-                    }
-                    else
-                    {
-                        actorType = UnknownActorType;
+                        continue;
                     }
 
-                    if (this.actorTypes.Contains(actorType))
-                    {
-                        actorNumByType[actorType] = actorNumByType[actorType] + 1;
-                    }
-                    else
-                    {
-                        actorNumByType[UnknownActorType] = actorNumByType[UnknownActorType] + 1;
-                    }
+                    removedActorIds.Remove(actorId);
+
+                    // If the actor hasn't been seen before OR if labels have changed, then register new metrics for the actor.
+                    this.PrepareActorMetrics(actor);
+
+                    this.actorMetricsByActorId[actorId].infoMetric.WithLabels(this.actorMetricsByActorId[actorId].infoLabels.Values.ToArray()).Set(1.0);
+                    this.actorMetricsByActorId[actorId].locationX.WithLabels([actorId]).Set(actor.LocationX);
+                    this.actorMetricsByActorId[actorId].locationY.WithLabels([actorId]).Set(actor.LocationY);
+                    this.actorMetricsByActorId[actorId].locationZ.WithLabels([actorId]).Set(actor.LocationZ);
                 }
 
-                foreach (var actorNumPair in actorNumByType)
+                // Forget metrics for previously-seen actors who are no longer active.
+                foreach (var actorId in removedActorIds)
                 {
-                    this.actorNum.WithLabels(actorNumPair.Key).Set(actorNumPair.Value);
+                    this.actorMetricsByActorId.Remove(actorId);
                 }
             }
         }
