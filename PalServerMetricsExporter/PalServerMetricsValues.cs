@@ -30,12 +30,17 @@ namespace PalServerMetricsExporter
         private ICollector<IGauge> uptime;
 
         // Per-player metrics
-        private Dictionary<string, ICollector<IGauge>> playerInfoById = new();
-        private Dictionary<string, OrderedDictionary<string, string>> playerInfoLabelsById = new();
-        private Dictionary<string, ICollector<IGauge>> playerPingById = new();
-        private Dictionary<string, ICollector<IGauge>> playerLocationXById = new();
-        private Dictionary<string, ICollector<IGauge>> playerLocationYById = new();
-        private Dictionary<string, ICollector<IGauge>> playerLevelById = new();
+        private sealed class PlayerMetrics
+        {
+            public ICollector<IGauge> infoMetric;
+            public OrderedDictionary<string, string> infoLabels = new();
+            public ICollector<IGauge> ping;
+            public ICollector<IGauge> locationX;
+            public ICollector<IGauge> locationY;
+            public ICollector<IGauge> level;
+        }
+
+        private Dictionary<string, PlayerMetrics> playerMetricsByUserId = new();
 
         // Server settings metrics
         private ICollector<IGauge> baseCampMaxNum;
@@ -251,7 +256,7 @@ namespace PalServerMetricsExporter
 
         private void PreparePlayerMetrics(PalServerPlayer player)
         {
-            var playerId = player.PlayerId;
+            var userId = player.UserId;
 
             var newPlayerInfoLabels = new OrderedDictionary<string, string>();
             newPlayerInfoLabels["player_account_name"] = player.AccountName;
@@ -262,59 +267,68 @@ namespace PalServerMetricsExporter
 
             // If player info labels have changed, then re-create their info metric.
             var forceCreatePlayerInfoMetric = false;
-            if (newPlayerInfoLabels.Count != this.infoLabels.Count || newPlayerInfoLabels.Except(this.infoLabels).Any())
+            if (!this.playerMetricsByUserId.ContainsKey(userId))
             {
-                this.playerInfoLabelsById[playerId] = newPlayerInfoLabels;
+                this.playerMetricsByUserId.Add(userId, new PlayerMetrics());
+                this.playerMetricsByUserId[userId].infoLabels = newPlayerInfoLabels;
                 forceCreatePlayerInfoMetric = true;
             }
-
-            if (forceCreatePlayerInfoMetric || !this.playerInfoById.ContainsKey(playerId))
+            else
             {
-                this.playerInfoById[playerId] = this.metricFactory
+                if (newPlayerInfoLabels.Count != this.playerMetricsByUserId[userId].infoLabels.Count || newPlayerInfoLabels.Except(this.playerMetricsByUserId[userId].infoLabels).Any())
+                {
+                    this.playerMetricsByUserId[userId].infoLabels = newPlayerInfoLabels;
+                    forceCreatePlayerInfoMetric = true;
+                }
+            }
+
+            if (forceCreatePlayerInfoMetric || this.playerMetricsByUserId[userId].infoMetric == null)
+            {
+                this.playerMetricsByUserId[userId].infoMetric = this.metricFactory
                     .CreateGauge(
                         $"{MetricNamePrefix}player_info",
                         "Player info",
-                        this.playerInfoLabelsById[playerId].Keys.ToArray())
+                        this.playerMetricsByUserId[userId].infoLabels.Keys.ToArray())
                     .WithExtendLifetimeOnUse();
             }
 
-            if (!this.playerPingById.ContainsKey(playerId))
+            if (this.playerMetricsByUserId[userId].ping == null)
             {
-                this.playerPingById[playerId] = this.metricFactory
+                this.playerMetricsByUserId[userId].ping = this.metricFactory
                     .CreateGauge(
                         $"{MetricNamePrefix}player_ping_seconds",
                         "Player's ping to the game server",
-                        ["player_id"])
+                        ["player_user_id"])
                     .WithExtendLifetimeOnUse();
             }
 
-            if (!this.playerLocationXById.ContainsKey(playerId))
+            if (this.playerMetricsByUserId[userId].locationX == null)
             {
-                this.playerLocationXById[playerId] = this.metricFactory
+                this.playerMetricsByUserId[userId].locationX = this.metricFactory
                     .CreateGauge(
                         $"{MetricNamePrefix}player_location_x",
                         "Player's x-axis world coordinate",
-                        ["player_id"])
+                        ["player_user_id"])
                     .WithExtendLifetimeOnUse();
             }
 
-            if (!this.playerLocationYById.ContainsKey(playerId))
+            if (this.playerMetricsByUserId[userId].locationY == null)
             {
-                this.playerLocationYById[playerId] = this.metricFactory
+                this.playerMetricsByUserId[userId].locationY = this.metricFactory
                     .CreateGauge(
                         $"{MetricNamePrefix}player_location_y",
                         "Player's y-axis world coordinate",
-                        ["player_id"])
+                        ["player_user_id"])
                     .WithExtendLifetimeOnUse();
             }
 
-            if (!this.playerLevelById.ContainsKey(playerId))
+            if (this.playerMetricsByUserId[userId].level == null)
             {
-                this.playerLevelById[playerId] = this.metricFactory
+                this.playerMetricsByUserId[userId].level = this.metricFactory
                     .CreateGauge(
                         $"{MetricNamePrefix}player_level",
                         "Player's character level",
-                        ["player_id"])
+                        ["player_user_id"])
                     .WithExtendLifetimeOnUse();
             }
         }
@@ -339,12 +353,19 @@ namespace PalServerMetricsExporter
 
             if (this.includePlayerData)
             {
-                // Check if each previously-seen player ID has disconnected.
-                var disconnectedPlayerIds = new HashSet<string>(this.playerInfoById.Keys);
+                // Check if each previously-seen user ID has disconnected.
+                var disconnectedUserIds = new HashSet<string>(this.playerMetricsByUserId.Keys);
 
                 foreach (var player in players.Players)
                 {
-                    disconnectedPlayerIds.Remove(player.PlayerId);
+                    // If our key (the user ID) is empty, there's nothing we can do with this player.
+                    var userId = player.UserId;
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        continue;
+                    }
+
+                    disconnectedUserIds.Remove(userId);
 
                     if (this.ignoreZeroPingPlayers)
                     {
@@ -359,22 +380,17 @@ namespace PalServerMetricsExporter
                     // If the player hasn't been seen before OR if labels have changed, then register new metrics for the player.
                     this.PreparePlayerMetrics(player);
 
-                    this.playerInfoById[player.PlayerId].WithLabels(this.playerInfoLabelsById[player.PlayerId].Values.ToArray()).Set(1.0);
-                    this.playerPingById[player.PlayerId].WithLabels([player.PlayerId]).Set(player.Ping / 1000.0);
-                    this.playerLocationXById[player.PlayerId].WithLabels([player.PlayerId]).Set(player.LocationX);
-                    this.playerLocationYById[player.PlayerId].WithLabels([player.PlayerId]).Set(player.LocationY);
-                    this.playerLevelById[player.PlayerId].WithLabels([player.PlayerId]).Set(player.Level);
+                    this.playerMetricsByUserId[userId].infoMetric.WithLabels(this.playerMetricsByUserId[userId].infoLabels.Values.ToArray()).Set(1.0);
+                    this.playerMetricsByUserId[userId].ping.WithLabels([userId]).Set(player.Ping / 1000.0);
+                    this.playerMetricsByUserId[userId].locationX.WithLabels([userId]).Set(player.LocationX);
+                    this.playerMetricsByUserId[userId].locationY.WithLabels([userId]).Set(player.LocationY);
+                    this.playerMetricsByUserId[userId].level.WithLabels([userId]).Set(player.Level);
                 }
 
                 // Forget metrics for previously-seen players who are no longer connected.
-                foreach (var playerId in disconnectedPlayerIds)
+                foreach (var userId in disconnectedUserIds)
                 {
-                    this.playerInfoById.Remove(playerId);
-                    this.playerInfoLabelsById.Remove(playerId);
-                    this.playerPingById.Remove(playerId);
-                    this.playerLocationXById.Remove(playerId);
-                    this.playerLocationYById.Remove(playerId);
-                    this.playerLevelById.Remove(playerId);
+                    this.playerMetricsByUserId.Remove(userId);
                 }
             }
 
