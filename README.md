@@ -36,13 +36,13 @@ palserver_info{server_version="v1.0.4.102642",world_guid="1FBDF24927C44861849C2C
 palserver_current_player_num 1
 # HELP palserver_server_fps The server's current runtime frames per second
 # TYPE palserver_server_fps gauge
-palserver_server_fps 59
+palserver_server_fps 59.592323303222656
 # HELP palserver_server_frame_time_seconds The server's processing time between frames
 # TYPE palserver_server_frame_time_seconds gauge
-palserver_server_frame_time_seconds 0.01674531936645508
-# HELP palserver_days The number of in-game days which have passed in the server's game world
-# TYPE palserver_days gauge
-palserver_days 59
+palserver_server_frame_time_seconds 0.01675912666320801
+# HELP palserver_world_age_seconds The amount of time which has passed in the server's game world
+# TYPE palserver_world_age_seconds gauge
+palserver_world_age_seconds 9328860
 # HELP palserver_max_player_num The maximum amount of players allowed on the server
 # TYPE palserver_max_player_num gauge
 palserver_max_player_num 32
@@ -51,16 +51,7 @@ palserver_max_player_num 32
 palserver_base_camp_num 2
 # HELP palserver_uptime_seconds The server's uptime
 # TYPE palserver_uptime_seconds gauge
-palserver_uptime_seconds 289
-# HELP palserver_actor_num The current number of actors in game data
-# TYPE palserver_actor_num gauge
-palserver_actor_num{actor_type="BaseCampPal"} 25
-palserver_actor_num{actor_type="NPC"} 1
-palserver_actor_num{actor_type="OtomoPal"} 0
-palserver_actor_num{actor_type="Player"} 1
-palserver_actor_num{actor_type="WildPal"} 6
-palserver_actor_num{actor_type="PalBox"} 2
-palserver_actor_num{actor_type="unknown"} 0
+palserver_uptime_seconds 11299
 ...
 ```
 
@@ -141,3 +132,80 @@ An example Grafana dashboard configuration is kept in [grafana-example.json](gra
 ![Grafana dashboard example](README-images/palserver-grafana.png)
 
 **NOTE**: Server host metrics, such as CPU and memory usage, are also crucial for a server operator to monitor. Host metrics are beyond the scope of this application.
+
+# Querying
+
+## Server metadata
+
+A special gauge named `palserver_info` with a constant value of `1` includes labels which describe metadata about the server. This metadata may be of interest when analyzing data collected from multiple game servers.
+
+`palserver_info * on(player_user_id) group_left(player_name, player_ip) palserver_player_info`
+
+| Labels | Value |
+| - | - |
+| {server_version="v1.0.4.102642", world_guid="1FBDF24927C44861849C2C57868607AC"} | 1 |
+
+## Players
+
+When a player is connected to the game server, an instance of the special gauge `palserver_player_info` will be exported with metadata identifying that player.
+
+- `player_account_name` is the player's online platform account name, such as their Steam name or Xbox name.
+- `player_id` is a unique ID created by the Palworld server for the player's save data.
+  - This ID may be inconsistent while the player is still logging into and loading the game server.
+- `player_ip` is the player's current client-side IP address.
+- `player_name` is the name of the player's character in-game.
+  - This may also be inconsistent while the player is still loading the game server.
+- `player_user_id` is a unique ID generated from the player's online platform account.
+  - This ID is the most consistent way to identify a player.
+
+Other metrics for the player, such as their ping measurement, are labeled with the `player_user_id` so that the metric can be joined with player metadata. For example:
+
+`palserver_player_ping_seconds * on(player_user_id) group_left(player_name, player_ip) palserver_player_info`
+
+| Labels | Value |
+| - | - |
+| {player_ip="1.2.3.4", player_name="MyPalPlayer", player_user_id="steam_12345678"} | 0.018178571701049806 |
+
+Note that player metrics are only exported when that player is connected; their metrics are removed from the export after they disconnect.
+
+## Game Actors
+
+When a Palworld server's Game Data API is enabled, this application's exported metrics can include some metrics for [actors](https://dev.epicgames.com/documentation/unreal-engine/actors-in-unreal-engine) in the game world.
+
+Only "simulating" game actors are in the server's Game Data response, which means:
+
+- Pals which are assigned to a base camp will always be shown, as they work on the base even when players are offline.
+- Wild pals *near a player* - within the server's [ServerReplicatePawnCullDistance](https://docs.palworldgame.com/settings-and-operation/configuration/) setting - will be shown, as the game simulates those pals' activity.
+
+Game actor data does not show any wild pals far away from players.
+
+Exported metrics will include an instance of the special gauge `palserver_actor_info` with identifying metadata for each current game actor.
+
+- `actor_class` is the game code's (Unreal Engine) class name, from which the actor was created.
+- `actor_id` is a unique identifier for the game actor.
+- `actor_name` is a mostly-human-friendly name for the actor.
+  - For Player actors, this name is the player's character name.
+  - For pal actors, this name is the in-game friendly name like "Melpaca" or "Pengullet" (which is not unique to the specific actor).
+  - For the PalBox (base camp) actor type, this name is a hard-coded string identifying the game object, plus a number which increments for each base camp.
+- `actor_type` is a type or category for the actor.
+  - The [Palworld "CharacterActor"](https://docs.palworldgame.com/api/rest-api/game-data) entity may be of a type like "Player" or "NPC" or "OtomoPal" (a party-member pal).
+  - The [Palworld "PalBoxActor"](https://docs.palworldgame.com/api/rest-api/game-data) entity is simply a "PalBox" type.
+
+Similar to player metrics, a game actor's metrics are labeled with `actor_id` so that they can be joined with relevant metadata. For example:
+
+`palserver_actor_location_x * on(actor_id) group_left(actor_name) palserver_actor_info{actor_type="PalBox"}`
+
+| Labels | Value |
+| - | - |
+| {actor_id="新規生成拠点テンプレート名0(仮)", actor_name="新規生成拠点テンプレート名0(仮)"} | -357970.5 |
+| {actor_id="新規生成拠点テンプレート名1(仮)", actor_name="新規生成拠点テンプレート名1(仮)"} | -365144.8125 |
+
+Some of those game actor metadata labels can be interesting for aggregate measurements, such as to count the number of each pal currently assigned to base camps:
+
+`sum(palserver_actor_info{actor_type="BaseCampPal"}) by(actor_name)`
+
+| Labels | Value |
+| - | - |
+| {actor_name="Melpaca"} | 1 |
+| {actor_name="Incineram"} | 5 |
+| {actor_name="Penking"} | 2 |
