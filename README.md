@@ -145,6 +145,18 @@ A special gauge named `palserver_info` with a constant value of `1` includes lab
 | - | - |
 | {server_version="v1.0.4.102642", world_guid="1FBDF24927C44861849C2C57868607AC"} | 1 |
 
+## Runtime performance
+
+**Summary: For the best performance measurements, enable Game Data metrics and refer to the `palserver_server_average_fps` gauge.**
+
+Gauges named `palserver_server_fps` and `palserver_server_frame_time_seconds` provide measurements of the game server's frame-rate and processing time per frame (*i.e.* the values are approximate inverses of each other).
+
+However, the FPS and frame time measurements from Palworld's game server are instantaneous samples, and thus are liable to misrepresent server performance "blips" -- short-lived performance stutters which may occur due to sudden changes in the server simulation state, especially when a player logs in or fast-travels to a distant area.
+
+To obtain more accurate server performance insights, the gauge `palserver_server_average_fps` is recommended instead. But note that this measurement is only available when running the Palworld server with `-enable-gamedata-api` and then using this exporter's `--include-game-data=true` option.
+
+[Pocketpair's documentation](https://docs.palworldgame.com/api/rest-api/metrics) doesn't confirm the evaluation period of the Average FPS metric; based on ad-hoc analysis (using Palworld version v1.0.5.102999) it *appears* to be measured over a rolling time window of 15 seconds.
+
 ## Players
 
 When a player is connected to the game server, an instance of the special gauge `palserver_player_info` will be exported with metadata identifying that player.
