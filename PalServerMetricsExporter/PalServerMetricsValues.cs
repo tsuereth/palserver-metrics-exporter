@@ -58,6 +58,8 @@ namespace PalServerMetricsExporter
         private ICollector<IGauge> serverReplicatePawnCullDistance;
 
         // Game data metrics
+        private ICollector<IGauge> serverAverageFps;
+
         private sealed class ActorMetrics
         {
             public ICollector<IGauge> infoMetric;
@@ -233,6 +235,20 @@ namespace PalServerMetricsExporter
                         .CreateGauge(
                             $"{MetricNamePrefix}server_replicate_pawn_cull_distance",
                             "The world distance within which players can see enemies, pals, and other players")
+                        .WithExtendLifetimeOnUse();
+                }
+            }
+
+            if (this.includeGameData)
+            {
+                if (this.serverAverageFps == null)
+                {
+                    // TODO: Try to determine the time window for this "average" FPS calculation.
+                    // (The documenation doesn't say!)
+                    this.serverAverageFps = this.metricFactory
+                        .CreateGauge(
+                            $"{MetricNamePrefix}server_average_fps",
+                            "The server's average runtime frames per second")
                         .WithExtendLifetimeOnUse();
                 }
             }
@@ -537,6 +553,8 @@ namespace PalServerMetricsExporter
 
             if (this.includeGameData)
             {
+                this.serverAverageFps.WithLabels().Set(gameData.AverageFps);
+
                 // Check if each previously-seen actor ID has been removed.
                 var removedActorIds = new HashSet<string>(this.actorMetricsByActorId.Keys);
 
