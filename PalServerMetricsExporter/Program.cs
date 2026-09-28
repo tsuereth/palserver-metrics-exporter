@@ -55,7 +55,7 @@ namespace PalServerMetricsExporter
                 { "include-server-settings=", $"Include server settings in exported metrics, default: {includeServerSettingsString}", o => includeServerSettingsString = o },
                 { "include-game-data=", $"Include game data in exported metrics, default: {includeGameDataString}", o => includeGameDataString = o },
 
-                { "update-interval-seconds", $"Interval (in seconds) between requesting updates from the target PalServer, default: {updateIntervalSecondsString}", o => updateIntervalSecondsString = o },
+                { "update-interval-seconds=", $"Interval (in seconds) between requesting updates from the target PalServer, default: {updateIntervalSecondsString}", o => updateIntervalSecondsString = o },
 
                 { "export-bind-host=", $"Hostname or IP address on which to serve metrics, default: {exportBindHost}", o => exportBindHost = o },
                 { "export-bind-port=", $"TCP port on which to serve metrics, default: {exportBindPortString}", o => exportBindPortString = o },
