@@ -127,7 +127,7 @@ With the exported metrics being collected and recorded by Prometheus, a visualiz
 
 An example Grafana dashboard configuration is kept in [grafana-example.json](grafana-example.json)
 
-*This example was made using Grafana v12.3.1*
+*This example was made using Grafana v13.2.3*
 
 ![Grafana dashboard example](README-images/palserver-grafana.png)
 
