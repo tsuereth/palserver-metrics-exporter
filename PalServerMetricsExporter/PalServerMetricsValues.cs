@@ -17,6 +17,13 @@ namespace PalServerMetricsExporter
             @"(?<Hours>[0-9]+):(?<Minutes>[0-9]+)",
             RegexOptions.Compiled);
 
+        // PalBox actors are named with a pre-defined text pattern
+        // (in Japanese!) that contains a unique ID number.
+        // The number is an increasing integer, starting with 0.
+        private static readonly Regex PalBoxActorNamePattern = new Regex(
+            @"新規生成拠点テンプレート名(?<PalBoxNumber>[0-9]+)\(仮\)",
+            RegexOptions.Compiled);
+
         private readonly IManagedLifetimeMetricFactory metricFactory;
 
         private bool includePlayerData;
@@ -359,6 +366,17 @@ namespace PalServerMetricsExporter
             else if (actor is PalServerPalBoxActor)
             {
                 var palBoxActor = actor as PalServerPalBoxActor;
+
+                var palBoxNameParts = PalBoxActorNamePattern.Match(palBoxActor.Name);
+                if (palBoxNameParts != null)
+                {
+                    var palBoxNumber = palBoxNameParts.Groups["PalBoxNumber"].Value;
+                    if (!string.IsNullOrEmpty(palBoxNumber))
+                    {
+                        return $"PalBox {palBoxNumber}";
+                    }
+                }
+
                 return palBoxActor.Name;
             }
 
