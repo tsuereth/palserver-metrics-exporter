@@ -18,4 +18,10 @@
     <PackageReference Include="prometheus-net" Version="8.2.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="map-default.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>
