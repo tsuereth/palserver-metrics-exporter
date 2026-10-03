@@ -10,3 +10,4 @@ ARG PUBLISH_OUTPUT
 COPY ${PUBLISH_OUTPUT} /PalServerMetricsExporter/
 RUN chmod +x /PalServerMetricsExporter/PalServerMetricsExporter
 ENTRYPOINT ["/PalServerMetricsExporter/PalServerMetricsExporter"]
+CMD ["--source-map-file", "/PalServerMetricsExporter/map-default.png"]
