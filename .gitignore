@@ -3,6 +3,8 @@
 
 **/Properties/launchSettings.json
 
+T_WorldMap.png
+
 publish_output
 image-context/dotnet-publish
 

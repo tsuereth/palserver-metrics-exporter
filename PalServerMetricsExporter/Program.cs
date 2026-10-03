@@ -1,13 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Mono.Options;
-using PalServerMetricsExporter.PalServerApi;
-using Prometheus;
 
 namespace PalServerMetricsExporter
 {
@@ -24,6 +23,8 @@ namespace PalServerMetricsExporter
             var printHelp = false;
             var printVersion = false;
 
+            var handleSigterm = false;
+
             var palServerHost = "localhost";
             var palServerPortString = "8212";
             var palServerAdminPassword = string.Empty;
@@ -36,14 +37,20 @@ namespace PalServerMetricsExporter
 
             var updateIntervalSecondsString = "15";
 
-            var exportBindHost = "0.0.0.0";
-            var exportBindPortString = "8213";
-            var exportPath = "/metrics";
+            var sourceMapFile = "map-default.png";
+            var sourceMapFileContentType = "image/png";
+
+            var bindHost = "0.0.0.0";
+            var bindPortString = "8213";
+            var serveMetricsPath = "/metrics";
+            var serveMapPath = "/map";
 
             var options = new OptionSet()
             {
                 { "help", "Print help text", _ => printHelp = true },
                 { "version", "Print application version", _ => printVersion = true },
+
+                { "handle-sigterm", "Handle SIGTERM by gracefully stopping", _ => handleSigterm = true },
 
                 { "palserver-host=", $"Target PalServer host, default: {palServerHost}", o => palServerHost = o },
                 { "palserver-port=", $"Target PalServer port, default: {palServerPortString}", o => palServerPortString = o },
@@ -57,9 +64,13 @@ namespace PalServerMetricsExporter
 
                 { "update-interval-seconds=", $"Interval (in seconds) between requesting updates from the target PalServer, default: {updateIntervalSecondsString}", o => updateIntervalSecondsString = o },
 
-                { "export-bind-host=", $"Hostname or IP address on which to serve metrics, default: {exportBindHost}", o => exportBindHost = o },
-                { "export-bind-port=", $"TCP port on which to serve metrics, default: {exportBindPortString}", o => exportBindPortString = o },
-                { "export-path=", $"HTTP path at which to serve metrics, default: {exportPath}", o => exportPath = o },
+                { "source-map-file=", $"Path to a source map-image file, default: {sourceMapFile}", o => sourceMapFile = o },
+                { "source-map-file-content-type=", $"MIME Content Type of the source map-image file, default: {sourceMapFileContentType}", o => sourceMapFileContentType = o },
+
+                { "bind-host=", $"Hostname or IP address on which to serve metrics, default: {bindHost}", o => bindHost = o },
+                { "bind-port=", $"TCP port on which to serve metrics, default: {bindPortString}", o => bindPortString = o },
+                { "serve-metrics-path=", $"HTTP path at which to serve metrics, default: {serveMetricsPath}", o => serveMetricsPath = o },
+                { "serve-map-path=", $"HTTP path at which to serve map images, default: {serveMapPath}", o => serveMapPath = o },
             };
             var unexpectedArgs = options.Parse(args);
             if (unexpectedArgs.Count > 0)
@@ -122,116 +133,53 @@ namespace PalServerMetricsExporter
             }
             var updateInterval = TimeSpan.FromSeconds(updateIntervalSeconds);
 
-            ushort exportBindPort;
-            if (!ushort.TryParse(exportBindPortString, out exportBindPort))
+            ushort bindPort;
+            if (!ushort.TryParse(bindPortString, out bindPort))
             {
-                throw new ArgumentException($"Failed to parse ushort from export-bind-port argument '{exportBindPortString}'");
+                throw new ArgumentException($"Failed to parse ushort from bind-port argument '{bindPortString}'");
             }
 
-            // By default, program metrics will include a ton of .NET diagnostics from _this_ application.
-            Metrics.SuppressDefaultMetrics();
-            // Configure the metrics factory to expire instrumentation if it hasn't been updated recently.
-            // Here we're going to squint and say that "recent" is within two update intervals.
-            var metricFactory = Metrics.WithManagedLifetime(expiresAfter: updateInterval * 2);
+            var tasks = new List<Task>();
+            using var cancelSource = new CancellationTokenSource();
 
-            logger.LogInformation($"Configuring with exporter at: http://{exportBindHost}:{exportBindPort}{exportPath}");
-
-            // Quirk notes:
-            // - .NET's HttpListener rejects the well-known "0.0.0.0" bind host address;
-            //   it instead expects the hostname "*" when binding to all local hostnames/addrs.
-            // - When Prometheus.MetricServer formats a "prefix" for its underlying HttpListener,
-            //   it adds a leading '/'; so remove a leading '/' from our own argument.
-            // - The underlying HttpListener requires a trailing '/' on its "prefix" parameter,
-            //   even though that trailing '/' isn't a literal requirement for client requests.
-            var normalizedBindHost = exportBindHost;
-            if (normalizedBindHost.Equals("0.0.0.0", StringComparison.Ordinal))
+            if (handleSigterm)
             {
-                normalizedBindHost = "*";
-            }
-            var normalizedExportPath = exportPath.TrimStart('/');
-            if (!normalizedExportPath.EndsWith('/'))
-            {
-                normalizedExportPath += '/';
-            }
-            using var exporterServer = new Prometheus.MetricServer(hostname: normalizedBindHost, port: exportBindPort, url: normalizedExportPath);
-            exporterServer.Start();
-
-            logger.LogInformation($"Configuring with target PalServer API: http://{palServerHost}:{palServerPort}");
-            using (var apiClient = new PalServerApiClient(logger, palServerHost, palServerPort, palServerAdminPassword))
-            {
-                var metricValues = new PalServerMetricsValues(
-                    metricFactory,
-                    includePlayerData,
-                    ignoreZeroPingPlayers,
-                    includeServerSettings,
-                    includeGameData);
-
-                // Loop forever, periodically requesting the server's metrics
-                // and updating this exporter's instrumentation accordingly.
-                while (true)
+                using var _ = PosixSignalRegistration.Create(PosixSignal.SIGTERM, (context) =>
                 {
-                    var updateTimer = Stopwatch.StartNew();
-                    try
-                    {
-                        logger.LogDebug("Updating current metric values");
+                    logger.LogInformation("Received cancel event");
+                    cancelSource.Cancel();
 
-                        // Initiate all PalServer API requests, and wait for them in parallel.
-                        var apiTasks = new List<Task>();
-
-                        var infoTask = apiClient.GetInfoAsync();
-                        apiTasks.Add(infoTask);
-
-                        var metricsTask = apiClient.GetMetricsAsync();
-                        apiTasks.Add(metricsTask);
-
-                        Task<PalServerPlayers> playersTask = null;
-                        if (includePlayerData)
-                        {
-                            playersTask = apiClient.GetPlayersAsync();
-                            apiTasks.Add(playersTask);
-                        }
-
-                        Task<PalServerSettings> settingsTask = null;
-                        if (includeServerSettings)
-                        {
-                            settingsTask = apiClient.GetSettingsAsync();
-                            apiTasks.Add(settingsTask);
-                        }
-
-                        Task<PalServerGameData> gameDataTask = null;
-                        if (includeGameData)
-                        {
-                            gameDataTask = apiClient.GetGameDataAsync();
-                            apiTasks.Add(gameDataTask);
-                        }
-
-                        await Task.WhenAll(apiTasks);
-
-                        metricValues.Update(
-                            infoTask.Result,
-                            metricsTask.Result,
-                            playersTask?.Result,
-                            settingsTask?.Result,
-                            gameDataTask?.Result);
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogError(ex, "Metrics update failed");
-                    }
-
-                    updateTimer.Stop();
-                    var updateDuration = TimeSpan.FromMilliseconds(updateTimer.ElapsedMilliseconds);
-                    if (updateDuration >= updateInterval)
-                    {
-                        logger.LogWarning($"Metrics update took {updateDuration.Milliseconds} ms, exceeding the delay interval {updateInterval.Milliseconds} ms; next update will start immediately");
-                    }
-                    else
-                    {
-                        var timeToNextUpdate = updateInterval - updateDuration;
-                        await Task.Delay(timeToNextUpdate);
-                    }
-                }
+                    // Cancel the cancel: let the runtime know we're handling this.
+                    context.Cancel = true;
+                });
             }
+
+            // Kick off the metrics exporter server.
+            using var metricsExporter = new PalServerPrometheusExporter(
+                logger,
+                palServerHost, palServerPort, palServerAdminPassword,
+                includePlayerData, ignoreZeroPingPlayers, includeServerSettings, includeGameData,
+                updateInterval,
+                bindHost, bindPort, serveMetricsPath);
+            tasks.Add(metricsExporter.ServeAsync(cancelSource.Token));
+
+            // And the map server.
+            using var mapServer = new PalworldMapServer(
+                logger,
+                sourceMapFile, sourceMapFileContentType,
+                bindHost, bindPort, serveMapPath);
+            tasks.Add(mapServer.ServeAsync(cancelSource.Token));
+
+            try
+            {
+                await Task.WhenAll(tasks);
+            }
+            catch (TaskCanceledException)
+            {
+                logger.LogInformation("Canceled, shutting down");
+            }
+
+            return 0;
         }
     }
 }
