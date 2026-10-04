@@ -88,6 +88,7 @@ namespace PalServerMetricsExporter
                 if (!this.disposed)
                 {
                     this.apiClient.Dispose();
+                    this.exporterServer.Stop();
 
                     this.disposed = true;
                 }
@@ -96,6 +97,8 @@ namespace PalServerMetricsExporter
 
         public async Task ServeAsync(CancellationToken cancelToken)
         {
+            this.exporterServer.Start();
+
             var metricValues = new PalServerMetricsValues(
                 this.metricFactory,
                 this.includePlayerData,
