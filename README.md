@@ -17,12 +17,15 @@ A container image for this application is built and published by the repository'
 ```sh
 docker run --rm \
     -p 8213:8213 \
+    -v /local/path/to/worldmap.png:/worldmap.png \
     ghcr.io/tsuereth/palserver-metrics-exporter:latest \
     --palserver-host=localhost \
     --palserver-port=8212 \
     --palserver-admin-password=MyAdminPassword \
-    --export-bind-port=8213 \
-    --export-bind-path=/metrics
+    --source-map-file=/worldmap.png \
+    --bind-port=8213 \
+    --serve-metrics-path=/metrics \
+    --serve-map-path=/map
 ```
 
 If this application is able to retrieve server metrics successfully, it will then publish Prometheus metrics at the configured port and path, for example `http://localhost:8213/metrics`
@@ -71,6 +74,12 @@ dotnet publish PalServerMetricsExporter/PalServerMetricsExporter.csproj \
 
 # Command-line options
 
+## General
+
+- `--help` will print the application's help text, then exit.
+- `--version` will print the application's build version, then exit.
+- `--handle-sigterm` will enable an optional SIGTERM handler, which attempts to gracefully stop the application when SIGTERM is received.
+
 ## PalServer API
 
 These options control how `PalServerMetricsExporter` connects to a target Palworld server.
@@ -102,11 +111,17 @@ The Palworld server's REST API requires HTTP Basic authentication. The username 
   - Each "update" will issue multiple requests to the Palworld server's REST API.
   - Calibrate this setting along with server performance and with the downstream Prometheus collector's scrape interval.
 
-## Exporter
+## Map file
 
-- `--export-bind-host=` (default: `0.0.0.0`) sets the hostname or IP address on which this application exports metrics.
-- `--export-bind-port=` (default: `8213`) sets the TCP port on which this application exports metrics.
-- `--export-path=` (default: `/metrics`) sets the HTTP request path at which this application exports metrics.
+- `--source-map-file=` (default: `map-default.png`) sets the path to a file which will be served in response to a map-image request.
+- `--source-map-file-content-type=` (default: `image/png`) sets the MIME type which will be supplied as a Content-Type header in response to a map-image request.
+
+## HTTP listening
+
+- `--bind-host=` (default: `0.0.0.0`) sets the hostname or IP address on which this application serves HTTP content, including metrics and map file.
+- `--bind-port=` (default: `8213`) sets the TCP port on which this application serves HTTP content, including metrics and map file.
+- `--serve-metrics-path=` (default: `/metrics`) sets the HTTP request path at which this application exports metrics.
+- `--serve-map-path=` (default: `/map`) sets the HTTP request path at which this application provides a map file.
 
 # Integration
 
@@ -221,3 +236,64 @@ Some of those game actor metadata labels can be interesting for aggregate measur
 | {actor_name="Melpaca"} | 1 |
 | {actor_name="Incineram"} | 5 |
 | {actor_name="Penking"} | 2 |
+
+# Map image and location coordinates
+
+In addition to Prometheus metrics, this application implements an HTTP listener to serve a map image upon request. Default options will listen to the path `/map` and will respond with a simple transparent PNG image.
+
+When `--source-map-file` specifies an alternate image file, the application thus exposes that image to downstream metric-collection and visualization tools. **The purpose of this option is to optionally support a [Grafana geomap panel](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/visualizations/geomap/).**
+
+Player and actor metrics include location data, which can be marked on this map.
+
+## Providing a Palworld map file
+
+The texture (image) used to show Palworld's map in-game can only be extracted from the purchaseable game client for Windows. It is not included in the freely-available dedicated server package.
+
+Given that, as Palworld is built with Unreal Engine, many free community-developed tools - including but not limited to [FModel](https://github.com/4sval/FModel) and [repak](https://github.com/trumank/repak) - can be used to extract assets from the game's content package at `<game-install-dir>/Pal/Content/Paks/Pal-Windows.pak`
+
+Within the content package, the path to Palworld's world map texture is: `Pal/Content/Pal/Texture/UI/Map/T_WorldMap.uasset`
+
+*If a tool requires Palworld's package-mapping information in "Mappings.usmap" this is likely available from the mod-development community, such as [at NexusMods](https://www.nexusmods.com/palworld/mods/2854).*
+
+The `T_WorldMap` texture should be easily export-able to a reusable image file. Note that the raw texture may be quite a bit larger than necessary for this application's simple visualization use-case; consider resizing the exported image to reduce application memory / bandwidth / visualization rendering load.
+
+After exporting and/or converting an image file, this application can be configured to provide that map file (*e.g.* to support a geomap visualization) using the `--source-map-file=...` option.
+
+If this application is being run in a Docker container, note that this option references an in-container file path, so the file must be mounted in the container with the `-v` option: `docker run ... -v /local/path/to/worldmap.png:/worldmap.png ... --source-map-file=/worldmap.png`
+
+## Understanding player and actor locations
+
+This application's exported metrics include:
+
+- `palserver_player_location_x` and `palserver_player_location_y` for each currently-connected player.
+- If Game Data metrics are enabled, `palserver_actor_location_x` and `palserver_actor_location_y` for each currently-simulating actor (including connected players).
+
+These values are taken directly from the Palworld server's API responses. They are not equal to the map coordinates seen by players in-game; they are also not correlated to intuitive meanings of X and Y coordinates.
+
+The location "x" coordinate corresponds to the *vertical* span of Palworld's in-game map. The value increases from the bottom of the map to the top.
+
+The location "y" coordinate corresponds to the *horizontal* span of Palworld's in-game map. The value increases from the left of the map to the right.
+
+The value ranges of these coordinates are encoded in Palworld game assets. (See the notes above regarding map-texture asset extraction; coordinate ranges can be observed in the data table at `Pal/Content/Pal/DataTable/WorldMapUIData/DT_WorldMapUIData.uasset`.) As of Palworld version v1.0.5.102999, they are:
+
+| Axis | Minimum | Maximum | (Calculated) Range | (Calculated) Midpoint |
+| - | - | - | - | - |
+| `location_x` (vertical) | -1099400.0 (bottom) | 349400.0 (top) | 1448800.0 | -375000.0 |
+| `location_y` (horizontal) | -724400.0 (left) | 724400.0 (right) | 1448800.0 | 0.0 |
+
+***NOTE**: These coordinates are for the "Main Map" only. Palworld's end-game "Tree" area has a separate map.*
+
+Given those ranges, and the [Web Mercator definition](https://en.wikipedia.org/wiki/Web_Mercator_projection)'s Latitude and Longitude ranges:
+
+| Axis | Minimum | Maximum | (Calculated) Range |
+| - | - | - | - |
+| Latitude | -85.05 (south) | 85.05 (north) | 170.1 |
+| Longitude | -180.0 (west) | 180.0 (east) | 360.0 |
+
+... the Palworld location coordinates can be "converted" into geomap-compatible coordinates, suitable for marking on an image of Palworld's map (instead of an image of Earth).
+
+`latitude = (location_x + 375000.0) * (170.1 / 1448800.0)`
+
+`longitude = (location_y + 0.0) * (360.0 / 1448800.0)`
+
+The example Grafana dashboard included in this repository performs this conversion math in a SQL expression.

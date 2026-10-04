@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
@@ -78,7 +79,7 @@ namespace PalServerMetricsExporter.PalServerApi
             }
         }
 
-        private async Task<T> GetApiResponseObjectAsync<T>(string apiEndpoint)
+        private async Task<T> GetApiResponseObjectAsync<T>(string apiEndpoint, CancellationToken cancelToken)
         {
             var requestUri = baseUrl + apiEndpoint;
 
@@ -87,8 +88,8 @@ namespace PalServerMetricsExporter.PalServerApi
                 request.Headers.Add("Accept", "application/json");
                 request.Headers.Add("Authorization", $"Basic {this.encodedUserPassString}");
 
-                var response = await this.httpClient.SendAsync(request);
-                var responseText = await response.Content.ReadAsStringAsync();
+                var response = await this.httpClient.SendAsync(request, cancelToken);
+                var responseText = await response.Content.ReadAsStringAsync(cancelToken);
 
                 try
                 {
@@ -104,29 +105,29 @@ namespace PalServerMetricsExporter.PalServerApi
             }
         }
 
-        public async Task<PalServerGameData> GetGameDataAsync()
+        public async Task<PalServerGameData> GetGameDataAsync(CancellationToken cancelToken)
         {
-            return await this.GetApiResponseObjectAsync<PalServerGameData>("game-data");
+            return await this.GetApiResponseObjectAsync<PalServerGameData>("game-data", cancelToken);
         }
 
-        public async Task<PalServerInfo> GetInfoAsync()
+        public async Task<PalServerInfo> GetInfoAsync(CancellationToken cancelToken)
         {
-            return await this.GetApiResponseObjectAsync<PalServerInfo>("info");
+            return await this.GetApiResponseObjectAsync<PalServerInfo>("info", cancelToken);
         }
 
-        public async Task<PalServerMetrics> GetMetricsAsync()
+        public async Task<PalServerMetrics> GetMetricsAsync(CancellationToken cancelToken)
         {
-            return await this.GetApiResponseObjectAsync<PalServerMetrics>("metrics");
+            return await this.GetApiResponseObjectAsync<PalServerMetrics>("metrics", cancelToken);
         }
 
-        public async Task<PalServerPlayers> GetPlayersAsync()
+        public async Task<PalServerPlayers> GetPlayersAsync(CancellationToken cancelToken)
         {
-            return await this.GetApiResponseObjectAsync<PalServerPlayers>("players");
+            return await this.GetApiResponseObjectAsync<PalServerPlayers>("players", cancelToken);
         }
 
-        public async Task<PalServerSettings> GetSettingsAsync()
+        public async Task<PalServerSettings> GetSettingsAsync(CancellationToken cancelToken)
         {
-            return await this.GetApiResponseObjectAsync<PalServerSettings>("settings");
+            return await this.GetApiResponseObjectAsync<PalServerSettings>("settings", cancelToken);
         }
     }
 }
