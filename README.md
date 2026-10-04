@@ -261,6 +261,10 @@ After exporting and/or converting an image file, this application can be configu
 
 If this application is being run in a Docker container, note that this option references an in-container file path, so the file must be mounted in the container with the `-v` option: `docker run ... -v /local/path/to/worldmap.png:/worldmap.png ... --source-map-file=/worldmap.png`
 
+Finally, a [Grafana Geomap](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/visualizations/geomap/)'s Basemap layer can be configured to reference this map image as a [custom XYZ Tile URL](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/visualizations/geomap/#xyz-tile-layer) using this application's `---serve-map-path=...` URL, for example: `http://metrics_exporter:8213/map`
+
+Unlike a real XYZ Tile server, this use-case provides only a single tile at a fixed zoom `Z` level and fixed `X` and `Y` position. *The basemap layer must also be configured to fix that `Z` level*; read on for more detail about positioning and location math.
+
 ## Understanding player and actor locations
 
 This application's exported metrics include:
@@ -276,24 +280,25 @@ The location "y" coordinate corresponds to the *horizontal* span of Palworld's i
 
 The value ranges of these coordinates are encoded in Palworld game assets. (See the notes above regarding map-texture asset extraction; coordinate ranges can be observed in the data table at `Pal/Content/Pal/DataTable/WorldMapUIData/DT_WorldMapUIData.uasset`.) As of Palworld version v1.0.5.102999, they are:
 
-| Axis | Minimum | Maximum | (Calculated) Range | (Calculated) Midpoint |
-| - | - | - | - | - |
-| `location_x` (vertical) | -1099400.0 (bottom) | 349400.0 (top) | 1448800.0 | -375000.0 |
-| `location_y` (horizontal) | -724400.0 (left) | 724400.0 (right) | 1448800.0 | 0.0 |
+| Axis | Minimum | Maximum | (Calculated) Range |
+| - | - | - | - |
+| `location_x` (vertical) | -1099400.0 (bottom) | 349400.0 (top) | 1448800.0 |
+| `location_y` (horizontal) | -724400.0 (left) | 724400.0 (right) | 1448800.0 |
 
 ***NOTE**: These coordinates are for the "Main Map" only. Palworld's end-game "Tree" area has a separate map.*
 
-Given those ranges, and the [Web Mercator definition](https://en.wikipedia.org/wiki/Web_Mercator_projection)'s Latitude and Longitude ranges:
+Thus to project Palworld locations onto a hypothetical square, ranging from 0.0 (bottom left) to 1.0 (top right):
 
-| Axis | Minimum | Maximum | (Calculated) Range |
-| - | - | - | - |
-| Latitude | -85.05 (south) | 85.05 (north) | 170.1 |
-| Longitude | -180.0 (west) | 180.0 (east) | 360.0 |
+`position_vertical = (location_x + 1099400.0) / 1448800.0`
 
-... the Palworld location coordinates can be "converted" into geomap-compatible coordinates, suitable for marking on an image of Palworld's map (instead of an image of Earth).
+`position_horizontal = (location_y + 724400.0) / 1448800.0`
 
-`latitude = (location_x + 375000.0) * (170.1 / 1448800.0)`
+Given those ranges, Palworld location coordinates can be roughly converted into geomap-compatible latitude and longitude values, by pretending that Palworld's map is equivalent to a flat projection of Earth. *However*... the [Web Mercator definition](https://en.wikipedia.org/wiki/Web_Mercator_projection), and [the Mercator projection's distortion of distance near extreme latitudes](https://en.wikipedia.org/wiki/Mercator_projection#Distortion_of_sizes), mean that such coordinate conversion becomes more mathematically convoluted (or, more inaccurate) the more of Earth is involved in this pretend equivalence.
 
-`longitude = (location_y + 0.0) * (360.0 / 1448800.0)`
+A linear translation of Palworld location coordinates into pretend latitude and pretend longitude will be most successful when choosing a small range of latitude and longitude. For example, [according to OpenStreetMap's zoom level reference](https://wiki.openstreetmap.org/wiki/Zoom_levels), at XYZ tiles with a zoom level `Z = 8` a tile's width is approximately 1.406 degrees of longitude; and if the tile is close to the equator, its height will also be approximately 1.406 degrees of latitude.
 
-The example Grafana dashboard included in this repository performs this conversion math in a SQL expression.
+In summary, if Palworld location coordinates are projected into a small (high zoom) XYZ tile that's near the equator (zero latitude), that projection can be linear without sacrificing meaningful accuracy. At `Z = 8`, these latitude and longitude values will range from the bottom left (0.0, 0.0) to top right (1.406, 1.406) of one tile:
+
+`latitude = (position_vertical * 1.406) = ((location_x + 1099400.0) / 1448800.0 * 1.406)`
+
+`longitude = (position_horizontal * 1.406) = ((location_y + 724400.0) / 1448800.0 * 1.406)`
