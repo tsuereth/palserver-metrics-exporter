@@ -302,3 +302,78 @@ In summary, if Palworld location coordinates are projected into a small (high zo
 `latitude = (position_vertical * 1.406) = ((location_x + 1099400.0) / 1448800.0 * 1.406)`
 
 `longitude = (position_horizontal * 1.406) = ((location_y + 724400.0) / 1448800.0 * 1.406)`
+
+## Comprehensive example
+
+Bringing all of the above together, as shown in this repository's [grafana-example.json](grafana-example.json)...
+
+1. A geomap panel's Basemap Layer is configured with:
+
+   a. The XYZ Tile layer type,
+
+   b. A URL template of `http://<metrics_exporter_host>:8213/map`,
+
+   c. Min Zoom of `8`, and also Max Zoom of `8`.
+
+2. The panel's queries include:
+
+   a. Instant (not time-series) `palserver_actor_info` to retrieve actor metadata,
+
+   b. Instant `palserver_actor_location_x`,
+
+   c. Instant `palserver_actor_location_y`,
+
+   d. And a [SQL Expression](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/query-transform-data/sql-expressions/) which:
+
+      - Converts the `location_x.__value__` into a `latitude` ranging from 0.0 to 1.406,
+
+      - Converts the `location_y.__value__` into a `longitude` ranging from 0.0 to 1.406,
+
+      - Adds columns for `marker_color` and `marker_size` and `marker_priority` with arbitrary rules based on the `actor_type`,
+
+      - `WHERE ...` to join the query results by `actor_id`,
+
+      - And `ORDER BY marker_priority DESC` to place specific types of marker "above" other types.
+
+   e. The geomap panel is configured to use that expression's `latitude`, `longitude`, `marker_size`, and `marker_color` values as appropriate.
+
+![Grafana dashboard example map](README-images/palserver-grafana-map.png)
+
+A formatted version of the SQL expression:
+
+```sql
+SELECT
+  info.actor_name AS name,
+  (
+    (location_x.__value__ + 1099400) / 1448800 * 1.406
+  ) AS latitude,
+  (
+    (location_y.__value__ + 724400) / 1448800 * 1.406
+  ) AS longitude,
+  CASE
+    WHEN info.actor_type = "PalBox" THEN "blue"
+    WHEN info.actor_type = "BaseCampPal" THEN "blue"
+    WHEN info.actor_type = "Player" THEN "green"
+    WHEN info.actor_type = "OtomoPal" THEN "green"
+    WHEN info.actor_type = "WildPal" THEN "red"
+    ELSE "yellow"
+  END AS marker_color,
+  CASE
+    WHEN info.actor_type = "PalBox" THEN 30
+    ELSE 5
+  END AS marker_size,
+  CASE
+    WHEN info.actor_type = "Player" THEN 2
+    WHEN info.actor_type = "PalBox" THEN 1
+    ELSE 0
+  END AS marker_priority
+FROM
+  info,
+  location_x,
+  location_y
+WHERE
+  info.actor_id = location_x.actor_id
+  AND info.actor_id = location_y.actor_id
+ORDER BY
+  marker_priority DESC
+```
