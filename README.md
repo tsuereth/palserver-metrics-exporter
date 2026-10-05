@@ -213,7 +213,7 @@ Exported metrics will include an instance of the special gauge `palserver_actor_
 - `actor_name` is a mostly-human-friendly name for the actor.
   - For Player actors, this name is the player's character name.
   - For pal actors, this name is the in-game friendly name like "Melpaca" or "Pengullet" (which is not unique to the specific actor).
-  - For the PalBox (base camp) actor type, this name is a hard-coded string identifying the game object, plus a number which increments for each base camp.
+  - For the PalBox (base camp) actor type, this name is the hard-coded string "PalBox" plus an incremental identifying number, like "PalBox 0" or "PalBox 1".
 - `actor_type` is a type or category for the actor.
   - The [Palworld "CharacterActor"](https://docs.palworldgame.com/api/rest-api/game-data) entity may be of a type like "Player" or "NPC" or "OtomoPal" (a party-member pal).
   - The [Palworld "PalBoxActor"](https://docs.palworldgame.com/api/rest-api/game-data) entity is simply a "PalBox" type.
@@ -224,8 +224,8 @@ Similar to player metrics, a game actor's metrics are labeled with `actor_id` so
 
 | Labels | Value |
 | - | - |
-| {actor_id="新規生成拠点テンプレート名0(仮)", actor_name="新規生成拠点テンプレート名0(仮)"} | -357970.5 |
-| {actor_id="新規生成拠点テンプレート名1(仮)", actor_name="新規生成拠点テンプレート名1(仮)"} | -365144.8125 |
+| {actor_id="新規生成拠点テンプレート名0(仮)", actor_name="PalBox 0"} | -357970.5 |
+| {actor_id="新規生成拠点テンプレート名1(仮)", actor_name="PalBox 1"} | -365144.8125 |
 
 Some of those game actor metadata labels can be interesting for aggregate measurements, such as to count the number of each pal currently assigned to base camps:
 
