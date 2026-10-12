@@ -3,7 +3,7 @@
   "kind": "Dashboard",
   "metadata": {
     "name": "adbqpfk",
-    "generation": 72,
+    "generation": 73,
     "creationTimestamp": "2026-09-05T20:27:27Z",
     "labels": {},
     "annotations": {}
@@ -333,7 +333,7 @@
                       "group": "__expr__",
                       "version": "v0",
                       "spec": {
-                        "expression": "SELECT\n  info.actor_name AS name,\n  (\n    (location_x.__value__ + 1099400) / 1448800 * 1.406\n  ) AS latitude,\n  (\n    (location_y.__value__ + 724400) / 1448800 * 1.406\n  ) AS longitude,\n  CASE\n    WHEN info.actor_type = \"PalBox\" THEN \"blue\"\n    WHEN info.actor_type = \"BaseCampPal\" THEN \"blue\"\n    WHEN info.actor_type = \"Player\" THEN \"green\"\n    WHEN info.actor_type = \"OtomoPal\" THEN \"green\"\n    WHEN info.actor_type = \"WildPal\" THEN \"red\"\n    ELSE \"yellow\"\n  END AS marker_color,\n  CASE\n    WHEN info.actor_type = \"PalBox\" THEN 30\n    ELSE 5\n  END AS marker_size,\n  CASE\n    WHEN info.actor_type = \"Player\" THEN 2\n    WHEN info.actor_type = \"PalBox\" THEN 1\n    ELSE 0\n  END AS marker_priority\nFROM\n  info,\n  location_x,\n  location_y\nWHERE\n  info.actor_id = location_x.actor_id\n  AND info.actor_id = location_y.actor_id\nORDER BY\n  marker_priority DESC",
+                        "expression": "SELECT\n  info.actor_name AS name,\n  (\n    (location_x.__value__ + 1099400) / 1788548.5 * 1.406\n  ) AS latitude,\n  (\n    (location_y.__value__ + 818197) / 1788548.5 * 1.406\n  ) AS longitude,\n  CASE\n    WHEN info.actor_type = \"PalBox\" THEN \"blue\"\n    WHEN info.actor_type = \"BaseCampPal\" THEN \"blue\"\n    WHEN info.actor_type = \"Player\" THEN \"green\"\n    WHEN info.actor_type = \"OtomoPal\" THEN \"green\"\n    WHEN info.actor_type = \"WildPal\" THEN \"red\"\n    ELSE \"yellow\"\n  END AS marker_color,\n  CASE\n    WHEN info.actor_type = \"PalBox\" THEN 30\n    ELSE 5\n  END AS marker_size,\n  CASE\n    WHEN info.actor_type = \"Player\" THEN 2\n    WHEN info.actor_type = \"PalBox\" THEN 1\n    ELSE 0\n  END AS marker_priority\nFROM\n  info,\n  location_x,\n  location_y\nWHERE\n  info.actor_id = location_x.actor_id\n  AND info.actor_id = location_y.actor_id\nORDER BY\n  marker_priority DESC",
                         "type": "sql"
                       },
                       "labels": {
