@@ -245,63 +245,131 @@ When `--source-map-file` specifies an alternate image file, the application thus
 
 Player and actor metrics include location data, which can be marked on this map.
 
+Details below regarding Palworld's in-game map, including asset paths and coordinate measurements, are as of game version v1.0.5.102999.
+
 ## Providing a Palworld map file
 
-The texture (image) used to show Palworld's map in-game can only be extracted from the purchaseable game client for Windows. It is not included in the freely-available dedicated server package.
+The textures (images) used to show Palworld's map in-game can only be extracted from the purchaseable game client for Windows. They are not included in the freely-available dedicated server package.
 
 Given that, as Palworld is built with Unreal Engine, many free community-developed tools - including but not limited to [FModel](https://github.com/4sval/FModel) and [repak](https://github.com/trumank/repak) - can be used to extract assets from the game's content package at `<game-install-dir>/Pal/Content/Paks/Pal-Windows.pak`
 
-Within the content package, the path to Palworld's world map texture is: `Pal/Content/Pal/Texture/UI/Map/T_WorldMap.uasset`
-
 *If a tool requires Palworld's package-mapping information in "Mappings.usmap" this is likely available from the mod-development community, such as [at NexusMods](https://www.nexusmods.com/palworld/mods/2854).*
 
-The `T_WorldMap` texture should be easily export-able to a reusable image file. Note that the raw texture may be quite a bit larger than necessary for this application's simple visualization use-case; consider resizing the exported image to reduce application memory / bandwidth / visualization rendering load.
+Palworld's in-game map textures are within the content package at these paths:
 
-After exporting and/or converting an image file, this application can be configured to provide that map file (*e.g.* to support a geomap visualization) using the `--source-map-file=...` option.
+- Palpagos Islands or "MainMap" at `Pal/Content/Pal/Texture/UI/Map/T_WorldMap.uasset`
 
-If this application is being run in a Docker container, note that this option references an in-container file path, so the file must be mounted in the container with the `-v` option: `docker run ... -v /local/path/to/worldmap.png:/worldmap.png ... --source-map-file=/worldmap.png`
+- The World Tree or "Tree" at `Pal/Content/Pal/Texture/UI/Map/T_TreeMap.uasset`
+
+Textures should be easily export-able to reusable image files.
+
+Although in-game maps are displayed separately, they share a single coordinate system, and so image composition tools can combine the separate images into one all-encompassing map.
+
+The coordinate boundaries and ranges of these maps are encoded in another Palworld game asset: `Pal/Content/Pal/DataTable/WorldMapUIData/DT_WorldMapUIData.uasset`
+
+| Map / Axis | Minimum | Maximum | (Calculated) Range |
+| - | - | - | - |
+| MainMap "X" | -1099400.0 | 349400.0 | 1448800.0 |
+| MainMap "Y" | -724400.0 | 724400.0 | 1448800.0 |
+| Tree "X" | 347351.5 | 689148.5 | 341797.0 |
+| Tree "Y" | -818197.0 | -476400.0 | 341797.0 |
+| _Combined_ "X" | -1099400.0 | 689148.5 | 1788548.5 |
+| _Combined_ "Y" | -818197.0 | 724400.0 | 1542597.0 |
+
+Note that these coordinates...
+
+- Use "X" to define *vertical* positioning, and "Y" to define *horizontal* positioning.
+
+- In the "X" (vertical) dimension, increase from bottom to top. (While the "Y" i.e. horizontal coordinates increase from left to right.)
+
+Given these notes - and given that, for compatibility with [XYZ Tile layers](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/visualizations/geomap/#xyz-tile-layer), the final map image must be a square - we can use some simple math to calculate image resizing and positioning parameters like so:
+
+```
+# EXAMPLE target output side length
+OutputL = 1024px
+
+# Combined map coordinates side length
+CombinedL = 1788548.5
+
+# MainMap coordinates side length
+MainMapL = 1448800.0
+
+MainMapResizedL = OutputL * (MainMapL / CombinedL)
+  = 1024px * (1448800.0 / 1788548.5)
+  = 829px
+
+MainMapLeftOffset = OutputL * ((MainMapMinY - CombinedMinY) / CombinedL)
+  = 1024px * ((-724400.0 - -818197.0) / 1788548.5)
+  = 54px
+
+MainMapTopOffset = OutputL * ((CombinedMaxX - MainMapMaxX) / CombinedL)
+  = 1024px * ((689148.5 - 349400.0) / 1788548.5)
+  = 195px
+
+# Tree coordinates side length
+TreeL = 341797.0
+
+TreeResizedL = OutputL * (TreeL / CombinedL)
+  = 1024px * (341797.0 / 1788548.5)
+  = 196px
+
+TreeLeftOffset = OutputL * ((TreeMinY - CombinedMinY) / CombinedL)
+  = 1024px * ((-818197.0 - -818197.0) / 1788548.5)
+  = 0px
+
+TreeTopOffset = OutputL * ((CombinedMaxX - TreeMaxX) / CombinedL)
+  = 1024px * ((689148.5 - 689148.5) / 1788548.5)
+  = 0px
+```
+
+(The example output side-length was arbitrarily chosen to balance visible detail versus client rendering complexity.)
+
+These calculations can be used in an [ImageMagick](https://imagemagick.org) composition command, to combine a static-color background with resized and repositioned map textures:
+
+```sh
+magick -size 1024x1024 xc:'#0D161E' \
+	T_WorldMap.png -geometry 829x829+54+195 -composite \
+	T_TreeMap.png -geometry 196x196+0+0 -composite \
+	output.png
+```
+
+The combined map image file can then be provided to this application's `--source-map-file=...` option. Note that if this application is being run in a Docker container, that file must be mounted within the container, like with the `-v` option: `docker run ... -v /local/path/to/output.png:/output.png ... --source-map-file=/output.png`
 
 Finally, a [Grafana Geomap](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/visualizations/geomap/)'s Basemap layer can be configured to reference this map image as a [custom XYZ Tile URL](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/visualizations/geomap/#xyz-tile-layer) using this application's `---serve-map-path=...` URL, for example: `http://metrics_exporter:8213/map`
 
-Unlike a real XYZ Tile server, this use-case provides only a single tile at a fixed zoom `Z` level and fixed `X` and `Y` position. *The basemap layer must also be configured to fix that `Z` level*; read on for more detail about positioning and location math.
+Unlike a real XYZ Tile server, this use-case provides only a single tile at a fixed zoom `Z` level and fixed `X` and `Y` position. *The basemap layer must also be configured to fix that `Z` level*; read on for more detail about how location coordinates are placed on this map.
 
 ## Understanding player and actor locations
 
 This application's exported metrics include:
 
 - `palserver_player_location_x` and `palserver_player_location_y` for each currently-connected player.
+
 - If Game Data metrics are enabled, `palserver_actor_location_x` and `palserver_actor_location_y` for each currently-simulating actor (including connected players).
 
-These values are taken directly from the Palworld server's API responses. They are not equal to the map coordinates seen by players in-game; they are also not correlated to intuitive meanings of X and Y coordinates.
+These values are taken directly from the Palworld server's API responses. They are not equal to the map coordinates seen by players in-game, but they do correspond to the map coordinates described above.
 
-The location "x" coordinate corresponds to the *vertical* span of Palworld's in-game map. The value increases from the bottom of the map to the top.
+Referencing those overall coordinate ranges, and given that "X" coordinates describe vertical positions (bottom-to-top) while "Y" describes horizontal positions (left-to-right), Palworld locations can be projected onto a hypothetical square which ranges from 0.0 (bottom left) to 1.0 (top right):
 
-The location "y" coordinate corresponds to the *horizontal* span of Palworld's in-game map. The value increases from the left of the map to the right.
+```
+position_vertical = (location_x - CombinedMinX) / CombinedL
+  = (location_x - -1099400.0) / 1788548.5
 
-The value ranges of these coordinates are encoded in Palworld game assets. (See the notes above regarding map-texture asset extraction; coordinate ranges can be observed in the data table at `Pal/Content/Pal/DataTable/WorldMapUIData/DT_WorldMapUIData.uasset`.) As of Palworld version v1.0.5.102999, they are:
+position_horizontal = (location_y - CombinedMinY) / CombinedL
+  = (location_y - -818197.0) / 1788548.5
+```
 
-| Axis | Minimum | Maximum | (Calculated) Range |
-| - | - | - | - |
-| `location_x` (vertical) | -1099400.0 (bottom) | 349400.0 (top) | 1448800.0 |
-| `location_y` (horizontal) | -724400.0 (left) | 724400.0 (right) | 1448800.0 |
+Those projected coordinates can then be roughly converted into geomap-compatible latitude and longitude values, by pretending that the square is equivalent to a flat projection of Earth. *However*... the [Web Mercator definition](https://en.wikipedia.org/wiki/Web_Mercator_projection), and [the Mercator projection's distortion of distance near extreme latitudes](https://en.wikipedia.org/wiki/Mercator_projection#Distortion_of_sizes), mean that such coordinate conversion becomes more mathematically convoluted (or, more inaccurate) the more of Earth is involved in this pretend equivalence.
 
-***NOTE**: These coordinates are for the "Main Map" only. Palworld's end-game "Tree" area has a separate map.*
-
-Thus to project Palworld locations onto a hypothetical square, ranging from 0.0 (bottom left) to 1.0 (top right):
-
-`position_vertical = (location_x + 1099400.0) / 1448800.0`
-
-`position_horizontal = (location_y + 724400.0) / 1448800.0`
-
-Given those ranges, Palworld location coordinates can be roughly converted into geomap-compatible latitude and longitude values, by pretending that Palworld's map is equivalent to a flat projection of Earth. *However*... the [Web Mercator definition](https://en.wikipedia.org/wiki/Web_Mercator_projection), and [the Mercator projection's distortion of distance near extreme latitudes](https://en.wikipedia.org/wiki/Mercator_projection#Distortion_of_sizes), mean that such coordinate conversion becomes more mathematically convoluted (or, more inaccurate) the more of Earth is involved in this pretend equivalence.
-
-A linear translation of Palworld location coordinates into pretend latitude and pretend longitude will be most successful when choosing a small range of latitude and longitude. For example, [according to OpenStreetMap's zoom level reference](https://wiki.openstreetmap.org/wiki/Zoom_levels), at XYZ tiles with a zoom level `Z = 8` a tile's width is approximately 1.406 degrees of longitude; and if the tile is close to the equator, its height will also be approximately 1.406 degrees of latitude.
+A linear translation of location coordinates into pretend latitude and pretend longitude will be most successful when choosing a small range of latitude and longitude. For example, [according to OpenStreetMap's zoom level reference](https://wiki.openstreetmap.org/wiki/Zoom_levels), at XYZ tiles with a zoom level `Z = 8` a tile's width is approximately 1.406 degrees of longitude; and if the tile is close to the equator, its height will also be approximately 1.406 degrees of latitude.
 
 In summary, if Palworld location coordinates are projected into a small (high zoom) XYZ tile that's near the equator (zero latitude), that projection can be linear without sacrificing meaningful accuracy. At `Z = 8`, these latitude and longitude values will range from the bottom left (0.0, 0.0) to top right (1.406, 1.406) of one tile:
 
-`latitude = (position_vertical * 1.406) = ((location_x + 1099400.0) / 1448800.0 * 1.406)`
+```
+latitude = (location_x - -1099400.0) / 1788548.5 * 1.406
 
-`longitude = (position_horizontal * 1.406) = ((location_y + 724400.0) / 1448800.0 * 1.406)`
+longitude = (location_y - -818197.0) / 1788548.5 * 1.406
+```
 
 ## Comprehensive example
 
@@ -345,10 +413,10 @@ A formatted version of the SQL expression:
 SELECT
   info.actor_name AS name,
   (
-    (location_x.__value__ + 1099400) / 1448800 * 1.406
+    (location_x.__value__ + 1099400) / 1788548.5 * 1.406
   ) AS latitude,
   (
-    (location_y.__value__ + 724400) / 1448800 * 1.406
+    (location_y.__value__ + 818197) / 1788548.5 * 1.406
   ) AS longitude,
   CASE
     WHEN info.actor_type = "PalBox" THEN "blue"
